@@ -11,6 +11,7 @@ data/raw/
 
 # Local secrets
 .env
+docker/.env
 *.original.md
 
 # Crawl4AI / Playwright caches
