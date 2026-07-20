@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Cached raw HTML — re-fetchable, not committed (also polite: keeps us from
+# re-hitting screener.in on every parse). Parsed outputs ARE committed.
+data/raw/
+
+# Local secrets
+.env
+*.original.md
+
+# Crawl4AI / Playwright caches
+.crawl4ai/
+
+# OS / editor
+.DS_Store
+Thumbs.db
