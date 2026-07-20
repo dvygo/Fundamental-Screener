@@ -1,56 +1,61 @@
 # Storage architecture
 
-Two tiers, one direction of flow. **Services never read the disk directly — they
-read MinIO.** The disk is the durable, offline copy that MinIO is rehydrated from.
+Raw drops are processed once; every processed file is then **dual-written** to
+MinIO (the serving layer) and to a dated disk backup (the offline mirror).
+**Services read MinIO only** — never the disk.
 
 ```
-   ingest (manual drop / scrape)
-            |
-            v
-   Disk  data/bod/YYYYMMDD/…        <- cold archive, source of record on physical
-   (dated folders)                     disk. Offline, human-managed, durable belt.
-            |
-            |  src/ingest → push
-            v
-   MinIO                             <- the access layer. Everything services use.
-     raw/    YYYYMMDD/… (WORM)          Warm + cold live here.
-     delta/  tables (versioned)
-            |
-            v
+   data/bod/                      <- raw manual drops (bhavcopies, daily reports).
+   (unprocessed inbox)               Pre-processing. Not what services see.
+        |
+        |  src/ingest — process the raw files
+        v
+      ┌───────────── dual-write ─────────────┐
+      v                                       v
+   MinIO                                  Disk  data/backup/YYYYMMDD/
+     raw/    YYYYMMDD/… (WORM)            (mirror of exactly what went to MinIO,
+     delta/  tables (versioned)           partitioned by processing date)
+      |
+      v
    Services / DuckDB query MinIO only
 ```
 
-## Roles
+## The three areas
 
-| Tier | What | Who writes | Who reads |
+| Location | Stage | Contents | Read by |
 |---|---|---|---|
-| **Disk `YYYYMMDD/`** | bhavcopies, daily reports, raw drops | you (manual) + ingest | ingest only |
-| **MinIO `raw/`** | same files, WORM/versioned | ingest | services (audit/replay) |
-| **MinIO `delta/`** | Delta tables built from raw | ingest | services / DuckDB |
+| `data/bod/` | **input** | raw manual drops, as downloaded | ingest only |
+| **MinIO** `raw/` + `delta/` | **serving** | processed files (WORM) + Delta tables | services / DuckDB |
+| `data/backup/YYYYMMDD/` | **backup** | mirror of every file written to MinIO | disaster recovery |
 
-## Why this split
+`bod/` is the inbox; `backup/YYYYMMDD/` is the outbox mirror. They hold different
+things — raw vs processed.
 
-- **Durability without depending on MinIO.** If the MinIO volume is wiped or
-  reset, nothing is lost — replay the disk `YYYYMMDD/` folders back into `raw/`
-  and rebuild `delta/`. The disk is the backstop.
-- **One serving contract.** Services and queries hit MinIO's S3 API only, so
-  they don't care where the physical files live or how they're archived. Disk
-  layout can change without touching a service.
+## Why dual-write
+
+- **MinIO can be rebuilt from disk.** If the MinIO volume is wiped, replay
+  `data/backup/YYYYMMDD/` back into `raw/` and rebuild `delta/`. Nothing lost.
+- **One serving contract.** Services and queries hit MinIO's S3 API only; they
+  don't know or care about disk layout.
 - **Immutability lives in MinIO.** WORM/object-lock is enforced by the running
-  MinIO, not the disk. The disk copy is disaster-recovery, not tamper-evidence
-  (a file on disk can be edited; a WORM object in MinIO cannot).
+  MinIO. The disk backup is disaster recovery, not tamper-evidence — a file on
+  disk can be edited; a WORM object in MinIO cannot.
 
 ## Reset / rehydrate
 
 ```bash
-# wipe MinIO (buckets + lock state), keep the disk archive
+# wipe MinIO (buckets + lock state), keep the disk backup
 cd docker && docker compose down -v && docker compose up -d
-# replay disk -> MinIO (raw WORM + delta) — see src/ingest
-python src/ingest.py --from data/bod --all-dates
+# replay the processed mirror back into MinIO (raw WORM + delta)
+python src/ingest.py --replay data/backup
 ```
 
-## Rule
+## Rules
 
-Date is the partition key everywhere: `YYYYMMDD/` on disk, `raw/YYYYMMDD/` in
-MinIO, a date column in Delta. Keep the exchange's original filename inside the
-dated folder — it already encodes the date and the report type.
+- **Process from `bod/`, write to both sinks.** A processed file is never in only
+  one place — MinIO and `backup/YYYYMMDD/` always get the same bytes.
+- **Date is the partition key** post-processing: `raw/YYYYMMDD/` in MinIO,
+  `backup/YYYYMMDD/` on disk, a date column in Delta. Keep the exchange's
+  original filename inside the dated folder.
+- `bod/` and `backup/` are committed (record of what was ingested and served);
+  `data/raw/` (cached scrape HTML) stays local.

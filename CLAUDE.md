@@ -20,8 +20,11 @@ Read `context/sources.md` before touching scrapers.
 - `setup/` — `requirements.txt`
 - `context/` — source assessment and design notes
 - `data/companies/` — parsed dossiers (committed)
-- `data/bod/` — **manually dropped** NSE/BSE bhavcopies & daily reports (committed)
-- `data/raw/` — cached raw HTML (gitignored; re-fetchable)
+- `data/bod/` — **raw manual drops** (NSE/BSE bhavcopies, daily reports) — the pre-processing inbox (committed)
+- `data/backup/YYYYMMDD/` — mirror of every processed file also written to MinIO (committed; DR)
+- `data/raw/` — cached scrape HTML (gitignored; re-fetchable)
+
+Storage tiering (disk → MinIO, services read MinIO only): see `context/storage.md`.
 
 ## Commands
 
