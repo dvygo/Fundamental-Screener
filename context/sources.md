@@ -34,6 +34,25 @@ No public API (retired 2012), aggressive bot protection, and a layout that
 changes often. yfinance (Yahoo) or the screener numbers give the same data far
 more reliably, so Google Finance is not worth the fragility.
 
+## NSE all-reports bulk download — manual only, by design
+
+`nseindia.com/all-reports` has a "Multiple file Download" button that fires
+`GET /api/reports?archives=[...]&date=DD-Mon-YYYY&type=Archives`, returning a
+zip of every selected report for that day. That endpoint sits behind **Akamai
+Bot Manager** — it only succeeds carrying real Akamai sensor cookies
+(`_abck`, `bm_sz`, `ak_bmsc`, `bm_sv`), issued by real-browser JS challenges.
+Confirmed: a plain `curl`/Playwright request gets `403` / `HTTP2_PROTOCOL_ERROR`
+(connection reset) even though `nsearchives.nseindia.com` — the static archive
+subdomain we already use — is unprotected.
+
+We do **not** script around this (no cookie replay, no stealth/headless
+evasion) — that's automation specifically built to defeat an anti-bot product,
+out of scope regardless of the data being public. `src/nse_report_links.py`
+only builds the correctly-formed URL per date (the query shape captured from a
+real browser DevTools session) and prints it — a human clicks it in their own
+authenticated browser. Bhavcopy/filings continue via the existing manual
+download + `src/extract.py` pipeline (see `BOD.md`).
+
 ## Company universe (seed)
 
 screener uses NSE symbols as company codes (`/company/RELIANCE/`). The list of
