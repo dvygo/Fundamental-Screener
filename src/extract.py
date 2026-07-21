@@ -17,6 +17,12 @@ What it does per file under the date folder:
 The archives themselves are NOT re-copied — their contents already land, so the
 working root has no redundant .zip/.gz to confuse downstream globbing.
 
+Content-aware placement (idempotent): every write is compared by sha256 against
+whatever's already at that name. Identical content -> skipped, no write.
+Different content under the same name -> overwritten (logged). Re-running
+extract.py on an already-extracted date is therefore a safe no-op, not a pile
+of `__dup` files.
+
 Usage:
     python src/extract.py 20260717
     python src/extract.py 20260717 --keep-archives   # also copy the .zip/.gz
@@ -26,8 +32,8 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import logging
-import shutil
 import zipfile
 from pathlib import Path
 
@@ -39,17 +45,25 @@ RAW = ROOT / "data" / "raw" / "bod"
 EXTRACTS = ROOT / "data" / "extracts"
 
 
-def _dst(out_dir: Path, name: str) -> Path:
-    """Target path; warn + suffix on name collision so nothing is silently lost."""
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def place(out_dir: Path, name: str, data: bytes) -> str:
+    """Write `data` as `name` in out_dir, content-aware, single read/write.
+
+    Returns 'written' (new file), 'replaced' (existing had different content),
+    or 'skip' (existing already has this exact content).
+    """
     dst = out_dir / name
     if dst.exists():
-        stem, dot, ext = name.partition(".")
-        i = 1
-        while dst.exists():
-            dst = out_dir / f"{stem}__dup{i}{dot}{ext}"
-            i += 1
-        log.warning("name collision: %s -> %s", name, dst.name)
-    return dst
+        if _sha256(dst.read_bytes()) == _sha256(data):
+            return "skip"
+        dst.write_bytes(data)
+        log.warning("replaced (content changed): %s", name)
+        return "replaced"
+    dst.write_bytes(data)
+    return "written"
 
 
 def run(date: str, keep_archives: bool):
@@ -59,7 +73,7 @@ def run(date: str, keep_archives: bool):
     out = EXTRACTS / date
     out.mkdir(parents=True, exist_ok=True)
 
-    copied = unzipped = gunzipped = 0
+    copied = unzipped = gunzipped = skipped = replaced = 0
     for path in sorted(src.rglob("*")):
         if not path.is_file():
             continue
@@ -71,31 +85,47 @@ def run(date: str, keep_archives: bool):
                     if m.is_dir():
                         continue
                     inner = Path(m.filename).name  # flatten any nesting
-                    with z.open(m) as fh, open(_dst(out, inner), "wb") as w:
-                        shutil.copyfileobj(fh, w)
-                    unzipped += 1
-            log.info("unzip   %-42s -> %d files", path.name, len(z.infolist()))
+                    status = place(out, inner, z.read(m))
+                    if status == "written":
+                        unzipped += 1
+                    elif status == "skip":
+                        skipped += 1
+                    else:
+                        replaced += 1
+            log.info("unzip   %-42s -> %d members", path.name, len(z.infolist()))
             if keep_archives:
-                shutil.copy2(path, _dst(out, path.name))
-                copied += 1
+                status = place(out, path.name, path.read_bytes())
+                copied += status == "written"
 
         elif low.endswith(".gz") and not low.endswith(".tar.gz"):
             inner = path.name[:-3]  # strip .gz
-            with gzip.open(path, "rb") as fh, open(_dst(out, inner), "wb") as w:
-                shutil.copyfileobj(fh, w)
-            gunzipped += 1
-            log.info("gunzip  %-42s -> %s", path.name, inner)
+            with gzip.open(path, "rb") as fh:
+                data = fh.read()
+            status = place(out, inner, data)
+            if status == "written":
+                gunzipped += 1
+                log.info("gunzip  %-42s -> %s", path.name, inner)
+            elif status == "skip":
+                skipped += 1
+            else:
+                replaced += 1
             if keep_archives:
-                shutil.copy2(path, _dst(out, path.name))
-                copied += 1
+                status = place(out, path.name, path.read_bytes())
+                copied += status == "written"
 
         else:
-            shutil.copy2(path, _dst(out, path.name))
-            copied += 1
+            status = place(out, path.name, path.read_bytes())
+            if status == "written":
+                copied += 1
+            elif status == "skip":
+                skipped += 1
+            else:
+                replaced += 1
 
     total = len(list(out.iterdir()))
-    log.info("done %s: copied %d, unzipped %d, gunzipped %d -> %d files in %s",
-             date, copied, unzipped, gunzipped, total, out)
+    log.info("done %s: copied %d, unzipped %d, gunzipped %d, skipped(unchanged) %d, "
+             "replaced(content changed) %d -> %d files in %s",
+             date, copied, unzipped, gunzipped, skipped, replaced, total, out)
 
 
 if __name__ == "__main__":
