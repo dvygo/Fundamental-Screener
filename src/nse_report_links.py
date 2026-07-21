@@ -23,10 +23,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
+import webbrowser
 from datetime import date, timedelta
+from pathlib import Path
 from urllib.parse import quote
 
 BASE = "https://www.nseindia.com/api/reports"
+ROOT = Path(__file__).resolve().parents[1]
+LINKS_DIR = ROOT / "data" / "nse_links"
+OPEN_DELAY = 5.0  # seconds between browser opens, so downloads don't collide
 
 # Verbatim "Select All Reports" archive list, captured from a real browser
 # request against https://www.nseindia.com/all-reports (capital-market/equities).
@@ -81,11 +87,53 @@ def daterange(d_from: date, d_to: date):
         yield d_from + timedelta(days=i)
 
 
+def run(d_from: date, d_to: date, view_links: bool, auto_download: bool):
+    dates = list(daterange(d_from, d_to))
+    urls = [(d, url_for(d)) for d in dates]
+
+    # Full URLs always go to a file — a 5700-char query string blows past
+    # terminal scrollback, so the file is the source of truth regardless of
+    # console output mode.
+    LINKS_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = LINKS_DIR / f"{d_from:%Y%m%d}_{d_to:%Y%m%d}.txt"
+    with open(out_path, "w", encoding="utf-8") as fh:
+        for d, url in urls:
+            fh.write(url + "\n")
+    print(f"# {len(urls)} links written to {out_path}")
+
+    if view_links:
+        print()
+        for d, url in urls:
+            print(f"# {d:%Y-%m-%d}")
+            print(url)
+            print()
+    else:
+        print(f"# {'date':<12} {'chars':>6}")
+        for d, url in urls:
+            print(f"  {d:%Y-%m-%d}   {len(url):>6}")
+
+    if auto_download:
+        print(f"\n# opening {len(urls)} links in your browser, "
+              f"{OPEN_DELAY:.0f}s apart (latest first)...")
+        for i, (d, url) in enumerate(urls, 1):
+            print(f"  [{i}/{len(urls)}] opening {d:%Y-%m-%d} ...")
+            webbrowser.open(url)
+            if i < len(urls):
+                time.sleep(OPEN_DELAY)
+        print("# done. check your browser's download folder.")
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(
-        description="Print NSE all-reports bulk-download links for a date range (latest first)")
+        description="NSE all-reports bulk-download links for a date range (latest first)")
     ap.add_argument("--from", dest="date_from", required=True, help="YYYYMMDD")
     ap.add_argument("--to", dest="date_to", required=True, help="YYYYMMDD")
+    ap.add_argument("--view-links", action="store_true",
+                    help="print full URLs to console (default: compact per-date summary; "
+                         "full URLs always written to data/nse_links/)")
+    ap.add_argument("--auto-download", action="store_true",
+                    help="open each link in your default browser, paced, latest first "
+                         "(real browser session — no bot-detection bypass)")
     args = ap.parse_args()
 
     d_from = date(int(args.date_from[:4]), int(args.date_from[4:6]), int(args.date_from[6:8]))
@@ -93,5 +141,4 @@ if __name__ == "__main__":
     if d_from > d_to:
         raise SystemExit("--from must be <= --to")
 
-    for d in daterange(d_from, d_to):
-        print(url_for(d))
+    run(d_from, d_to, args.view_links, args.auto_download)

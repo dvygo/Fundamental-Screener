@@ -16,6 +16,9 @@ data/extracts/
 # Bronze parquet — derived from raw, lives in MinIO, rebuildable. Not committed.
 data/bronze/
 
+# Generated NSE bulk-download links (regeneratable from src/nse_report_links.py).
+data/nse_links/
+
 # Backup = disk DR mirror of MinIO (binary raw + parquet). Don't commit the
 # payload (git would bloat daily). Commit only the sha manifest — the audit record.
 data/backup/**
