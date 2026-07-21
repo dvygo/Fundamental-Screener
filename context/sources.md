@@ -22,6 +22,40 @@ User-Agent, a hard delay between requests, and **raw HTML cached to
 `data/raw/screener/`** (gitignored) so re-parsing never re-hits the site. If they
 rate-limit or block, that's expected — the scrape degrades, it doesn't hammer.
 
+## B3 — fund manager involvement (authenticated, accepted tradeoff)
+
+`screener.in/full-text-search/?q=<name>` is the only practical source found for
+"which companies is this fund manager associated with" (B3, scoped narrowly —
+involvement only, not full holdings; see B7/8 below for that). Two things are
+true about this endpoint:
+
+- It **requires login** — unauthenticated requests redirect to `/register/`.
+- It uses `?q=`, which our own `robots.txt` reading disallows site-wide,
+  **regardless of authentication** — logging in doesn't change what the
+  directive covers.
+
+This is a deliberate, explicit exception to the public-page-only stance above,
+made by the project owner with the tradeoff understood — not a default. It's
+scoped to this one endpoint (fund-manager search), not a blanket authenticated
+posture for the rest of screener.in.
+
+- Credentials live in a **gitignored root `.env`** (`SCREENER_USERNAME`,
+  `SCREENER_PASSWORD`) — never in chat, never committed.
+- Same discipline as everywhere else: real UA, paced requests, cached results,
+  degrade gracefully on block/rate-limit.
+- Implementation: `src/screener_search.py`.
+
+## B7/8 — fund manager REAL holdings (separate, later, bigger)
+
+Investigated `amfiindia.com/online-center/portfolio-disclosure` — it's a
+**directory, not a data host**: clicking an AMC tile opens a new tab to that
+AMC's own site (confirmed: ICICI Prudential → `icicipruamc.com/media-center/
+downloads?...FortnightlyPortfolioDisclosures`). SEBI's "publish on AMC site AND
+AMFI site" mandate is satisfied by AMFI linking out, not mirroring files. Real
+per-scheme holdings (with fund manager name, per SEBI's mandated format) means
+scraping **~40 individual AMC websites**, each its own page structure — a
+separate, later phase, not a B3 blocker.
+
 ## News — RSS + sitemaps (livemint, moneycontrol, …)
 
 News sites publish RSS feeds and news sitemaps (the same discovery pattern used
