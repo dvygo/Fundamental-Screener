@@ -81,15 +81,36 @@ investor-relations pages. Each announcement is classified into an event type:
 
 ```
 src/                        one script per source/stage
+  extract.py                UNO — decompress raw drop -> data/extracts (root)
+  ingest.py                 push data/extracts -> MinIO raw/ (WORM) + backup
+  xbrl_populate.py          shred filing XBRL -> Bronze parquet -> MinIO
+  screens.py                Layer A screens (req 1-5) via DuckDB over MinIO
   screener_company.py       screener.in dossier scraper
 setup/requirements.txt
 context/                    source, storage, requirement docs
 data/
   companies/                parsed dossiers  {CODE}.json   (committed)
-  raw/bod/                  raw manual exchange drops — INBOX (pre-processing)
+  raw/bod/YYYYMMDD/         raw manual exchange drops — pristine (gitignored)
+  extracts/YYYYMMDD/        decompressed working ROOT (gitignored, rebuildable)
   raw/screener/             cached scrape HTML (gitignored, re-fetchable)
-  backup/YYYYMMDD/          mirror of every processed file also sent to MinIO (DR)
+  backup/YYYYMMDD/          DR mirror of what went to MinIO (payload gitignored;
+                            only _ingest_manifest.json committed)
 docker/                     MinIO compose + WORM/versioning provisioning
+```
+
+## Pipeline
+
+```
+data/raw/bod/<date>/     raw manual drops (some .zip/.gz)
+      │  UNO  extract.py            decompress + copy all, flat
+      ▼
+data/extracts/<date>/    working root — everything downstream reads here
+      │  ingest.py                  push -> MinIO raw/ (WORM) + backup
+      ▼
+MinIO raw/               ── xbrl_populate.py ──► MinIO bronze/ (facts parquet)
+      │  screens.py (DuckDB httpfs, schema-on-read)
+      ▼
+Layer A screens (req 1-5)
 ```
 
 Storage tiering (disk → MinIO; services read MinIO only):
@@ -103,13 +124,18 @@ see [`context/storage.md`](context/storage.md).
 pip install -r setup/requirements.txt
 playwright install chromium              # only if a scraper needs the browser
 
-# fundamentals dossier
-python src/screener_company.py RELIANCE TCS INFY
-python src/screener_company.py --file data/universe.txt
-
 # storage layer
 cd docker && cp .env.example .env        # set real MinIO creds
 docker compose up -d                     # MinIO :9000 (API) / :9001 (console)
+
+# daily pipeline for one date folder (operator dropped files per BOD.md)
+python src/extract.py       20260717     # UNO: decompress -> data/extracts
+python src/ingest.py        20260717     # -> MinIO raw/ (WORM) + backup
+python src/xbrl_populate.py 20260717     # filings XBRL -> Bronze (paced; resumable)
+python src/screens.py all --n 30 --top 20   # Layer A screens (req 1-5)
+
+# fundamentals dossier (screener.in, separate)
+python src/screener_company.py RELIANCE TCS INFY
 ```
 
 ---

@@ -5,19 +5,22 @@ WORM). Transform at query time with **DuckDB** reading MinIO over S3. Nothing is
 stripped at load; screens are SQL, not baked files.
 
 ```
-LAND   raw drop → MinIO raw/ (WORM) + disk backup mirror        [FOCUS NOW]
-QUERY  DuckDB --httpfs--> s3://raw/  runs screen SQL            [next]
+UNO    raw drop → data/extracts/ (decompress zip/gz + copy all)  [DONE]
+LAND   data/extracts → MinIO raw/ (WORM) + disk backup mirror     [DONE]
+QUERY  DuckDB --httpfs--> s3://raw/  runs screen SQL              [DONE 1-5]
 ```
+
+Pipeline order: `extract.py` (UNO, the root) → `ingest.py` → `screens.py` /
+`xbrl_populate.py`. Everything downstream reads `data/extracts/`, never the raw
+drop; the raw drop stays pristine.
 
 ---
 
-## NOW — push to MinIO
-- [ ] `src/ingest.py` — push a day's `data/raw/bod/YYYYMMDD/` → MinIO `raw/YYYYMMDD/`
-      (WORM) **and** mirror to `data/backup/YYYYMMDD/`. All files, verbatim, lossless.
-- [ ] per-file sha256 manifest written to both sinks (integrity + dedupe key later).
-- [ ] idempotent: skip keys already present (don't fight WORM on re-run).
-- [ ] read MinIO creds from `docker/.env`; fail loud if MinIO down.
-- [ ] verify: object lands, is WORM (can't delete), backup mirror matches sha.
+## Done — process UNO + push to MinIO
+- [x] `src/extract.py` (UNO) — decompress `data/raw/bod/<date>/` (.zip/.gz) + copy
+      all → `data/extracts/<date>/` (flat working root). Collision-safe.
+- [x] `src/ingest.py` — push `data/extracts/<date>/` → MinIO `raw/` (WORM) + mirror
+      to `data/backup/`. sha256 manifest, idempotent, WORM-verified.
 
 ## NEXT — query layer (DuckDB over MinIO)
 - [ ] `httpfs`/S3 config → DuckDB reads `s3://raw/...` directly (no local truth file).

@@ -9,6 +9,10 @@ venv/
 # re-hitting screener.in on every parse). Parsed outputs ARE committed.
 data/raw/
 
+# Decompressed working root (process UNO, src/extract.py) — derived from the raw
+# drop, rebuildable, feeds MinIO. Not committed.
+data/extracts/
+
 # Bronze parquet — derived from raw, lives in MinIO, rebuildable. Not committed.
 data/bronze/
 

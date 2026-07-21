@@ -6,7 +6,7 @@ fact, EVERY fact kept (nothing chosen, nothing dropped). Context, period, unit,
 decimals and any dimensions travel with each fact, so the Silver/Gold transforms
 (promoter %, EPS, FII/DII split, insider qty) are pure SQL pivots later.
 
-    data/raw/bod/<date>/CF-*.csv         (filing indexes, hold XBRL urls)
+    data/extracts/<date>/CF-*.csv        (filing indexes, hold XBRL urls)
         │  fetch each .xml (cached, paced, resumable)
         │  shred -> long facts
         ▼
@@ -43,7 +43,8 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("xbrl_populate")
 
 ROOT = Path(__file__).resolve().parents[1]
-RAW = ROOT / "data" / "raw" / "bod"
+# read the decompressed working root (process UNO = src/extract.py)
+EXTRACTS = ROOT / "data" / "extracts"
 XML_CACHE = ROOT / "data" / "raw" / "xbrl"
 BRONZE = ROOT / "data" / "bronze"
 BACKUP = ROOT / "data" / "backup"
@@ -224,9 +225,9 @@ def push_minio(local: Path, key: str):
 
 # --------------------------------------------------------------- driver
 def run(date, types, limit):
-    folder = RAW / date
+    folder = EXTRACTS / date
     if not folder.is_dir():
-        raise SystemExit(f"no raw folder: {folder}")
+        raise SystemExit(f"no extracts folder: {folder} — run src/extract.py {date} first")
     jobs = collect(folder, set(types) if types else None)
     if limit:
         # cap per type, not globally, so each type gets some coverage

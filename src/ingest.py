@@ -41,7 +41,9 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("ingest")
 
 ROOT = Path(__file__).resolve().parents[1]
-RAW = ROOT / "data" / "raw" / "bod"
+# Pipeline reads the decompressed working root (process UNO = src/extract.py),
+# never the pristine raw drop.
+EXTRACTS = ROOT / "data" / "extracts"
 BACKUP = ROOT / "data" / "backup"
 RAW_BUCKET = "raw"
 
@@ -96,9 +98,9 @@ def _exists(client: Minio, bucket: str, key: str) -> bool:
 
 
 def run(date: str, dry_run: bool):
-    folder = RAW / date
+    folder = EXTRACTS / date
     if not folder.is_dir():
-        raise SystemExit(f"no raw folder: {folder}")
+        raise SystemExit(f"no extracts folder: {folder} — run src/extract.py {date} first")
 
     client = _client()
     # fail loud if MinIO / bucket is not reachable
