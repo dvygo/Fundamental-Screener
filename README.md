@@ -124,19 +124,22 @@ see [`context/storage.md`](context/storage.md).
 pip install -r setup/requirements.txt
 playwright install chromium              # only if a scraper needs the browser
 
-# storage layer
-cd docker && cp .env.example .env        # set real MinIO creds
-docker compose up -d                     # MinIO :9000 (API) / :9001 (console)
-
 # daily pipeline for one date folder (operator dropped files per BOD.md)
 python src/extract.py       20260717     # UNO: decompress -> data/extracts
-python src/ingest.py        20260717     # -> MinIO raw/ (WORM) + backup
-python src/xbrl_populate.py 20260717     # filings XBRL -> Bronze (paced; resumable)
+python src/xbrl_populate.py 20260717     # filings XBRL -> Bronze parquet (paced; resumable)
 python src/screens.py all --n 30 --top 20   # Layer A screens (req 1-5)
 
 # fundamentals dossier (screener.in, separate)
 python src/screener_company.py RELIANCE TCS INFY
+
+# v2 — MinIO/WORM serving layer (currently deferred)
+# cd docker && cp .env.example .env && docker compose up -d
+# python src/ingest.py 20260717            # -> MinIO raw/ (WORM) + backup
+# python src/xbrl_populate.py 20260717 --push
 ```
+
+> **v1 reads local disk** (`data/extracts/`). MinIO/WORM is v2 — the `ingest.py`
+> tool and `--push` flag exist but the container is torn down for now.
 
 ---
 

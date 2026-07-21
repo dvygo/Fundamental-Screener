@@ -224,7 +224,7 @@ def push_minio(local: Path, key: str):
 
 
 # --------------------------------------------------------------- driver
-def run(date, types, limit):
+def run(date, types, limit, push=False):
     folder = EXTRACTS / date
     if not folder.is_dir():
         raise SystemExit(f"no extracts folder: {folder} — run src/extract.py {date} first")
@@ -281,24 +281,27 @@ def run(date, types, limit):
     con.close()
     log.info("wrote %s  (%d facts, %d filings)", pq, n, len(jobs) - failed)
 
-    # mirror to backup + push MinIO
+    # mirror to backup; MinIO push is v2 (opt-in)
     bdir = BACKUP / date / "bronze"
     bdir.mkdir(parents=True, exist_ok=True)
     import shutil
     shutil.copy2(pq, bdir / pq.name)
-    push_minio(pq, f"{date}/xbrl_facts.parquet")
+    if push:
+        push_minio(pq, f"{date}/xbrl_facts.parquet")
 
     log.info("done: fetched %d, cached %d, failed %d, facts %d",
              fetched, cached, failed, n)
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Shred filing XBRL -> Bronze Parquet -> MinIO")
-    ap.add_argument("date", help="folder under data/raw/bod, e.g. 20260717")
+    ap = argparse.ArgumentParser(description="Shred filing XBRL -> Bronze Parquet (disk; MinIO push is v2)")
+    ap.add_argument("date", help="folder under data/extracts, e.g. 20260717")
     ap.add_argument("--types", nargs="*",
                     choices=["insider", "shareholding", "results"],
                     help="filing types to populate (default: all)")
     ap.add_argument("--limit", type=int, default=0,
                     help="cap filings PER TYPE (resumable build); 0 = all")
+    ap.add_argument("--push", action="store_true",
+                    help="also push Bronze parquet to MinIO (v2; needs MinIO up)")
     args = ap.parse_args()
-    run(args.date, args.types, args.limit)
+    run(args.date, args.types, args.limit, args.push)

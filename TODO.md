@@ -4,15 +4,20 @@ Architecture: **ELT**. Land raw whole (lossless) → **MinIO** (storage of truth
 WORM). Transform at query time with **DuckDB** reading MinIO over S3. Nothing is
 stripped at load; screens are SQL, not baked files.
 
+**v1 (now) = disk only. MinIO/WORM = v2.** Focus v1: fill daily data + backfill.
+
 ```
-UNO    raw drop → data/extracts/ (decompress zip/gz + copy all)  [DONE]
-LAND   data/extracts → MinIO raw/ (WORM) + disk backup mirror     [DONE]
-QUERY  DuckDB --httpfs--> s3://raw/  runs screen SQL              [DONE 1-5]
+UNO    raw drop → data/extracts/ (decompress zip/gz + copy all)   [DONE]
+QUERY  DuckDB over data/extracts/*/  runs screen SQL              [DONE 1-5]
+XBRL   filings → data/bronze/ parquet (disk)                      [DONE]
+--- v2 ---
+LAND   data/extracts → MinIO raw/ (WORM) + backup                 [built, deferred]
+SERVE  DuckDB --httpfs--> s3://raw/                               [deferred]
 ```
 
-Pipeline order: `extract.py` (UNO, the root) → `ingest.py` → `screens.py` /
-`xbrl_populate.py`. Everything downstream reads `data/extracts/`, never the raw
-drop; the raw drop stays pristine.
+Pipeline order (v1): `extract.py` (UNO, the root) → `screens.py` /
+`xbrl_populate.py`, all reading `data/extracts/`. `ingest.py` + `--push` are the
+v2 MinIO path (MinIO currently torn down). Raw drop stays pristine.
 
 ---
 

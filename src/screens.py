@@ -1,9 +1,13 @@
-"""Layer A screens (requirement.md 1-5) - DuckDB SQL over bhavcopy in MinIO.
+"""Layer A screens (requirement.md 1-5) - DuckDB SQL over bhavcopy on disk.
 
-ELT: nothing pre-baked. Reads raw bhavcopy CSVs straight from MinIO
-(`s3://raw/*/`) and computes the screens at query time. As more daily folders
-land, the N-day screens (2, 3, 5) deepen automatically - the DISTINCT on event
-dates also absorbs the weekly download overlap (no manual dedupe needed).
+ELT: nothing pre-baked. Reads bhavcopy CSVs straight from the decompressed
+working root (`data/extracts/*/`) and computes the screens at query time. As
+more daily folders land, the N-day screens (2, 3, 5) deepen automatically - the
+DISTINCT on event dates also absorbs the weekly download overlap (no manual
+dedupe needed).
+
+(v1 reads local disk. MinIO/WORM serving is v2 - flip the globs back to
+`s3://raw/` and restore the httpfs/S3 config in connect() when that lands.)
 
 Screens:
   1  52-week HIGH trigger - last session
@@ -23,28 +27,16 @@ from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
 
 import duckdb
 
+ROOT = Path(__file__).resolve().parents[1]
+EXTRACTS = ROOT / "data" / "extracts"
+
 
 def connect():
-    env = os.path.join(os.path.dirname(__file__), "..", "docker", ".env")
-    if os.path.isfile(env):
-        for line in open(env):
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip())
-    ep = os.environ.get("MINIO_ENDPOINT", "localhost:9000")
-    ak = os.environ.get("MINIO_ROOT_USER", "minioadmin")
-    sk = os.environ.get("MINIO_ROOT_PASSWORD", "minioadmin")
     con = duckdb.connect()
-    con.execute("INSTALL httpfs; LOAD httpfs;")
-    con.execute(f"SET s3_endpoint='{ep}'")
-    con.execute("SET s3_use_ssl=false")
-    con.execute("SET s3_url_style='path'")
-    con.execute(f"SET s3_access_key_id='{ak}'")
-    con.execute(f"SET s3_secret_access_key='{sk}'")
     _base_views(con)
     return con
 
@@ -54,8 +46,8 @@ _D = "try_strptime({0}, '%d-%b-%Y')::date"
 
 
 def _base_views(con):
-    bhav = "s3://raw/*/sec_bhavdata_full*.csv"
-    wk = "s3://raw/*/CM_52_wk_High_low*.csv"
+    bhav = f"{EXTRACTS.as_posix()}/*/sec_bhavdata_full*.csv"
+    wk = f"{EXTRACTS.as_posix()}/*/CM_52_wk_High_low*.csv"
 
     # daily EQ prices, one row per (symbol, session)
     con.execute(f"""
