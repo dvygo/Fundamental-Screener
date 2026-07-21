@@ -50,6 +50,10 @@ class AuthenticationError(ScreenerError):
     """Raised when login fails."""
 
 
+class RateLimitedError(ScreenerError):
+    """Raised on 429/403 — a block/rate-limit, not a genuine empty result."""
+
+
 def _load_dotenv(path: Path):
     if not path.is_file():
         return
@@ -103,6 +107,12 @@ class ScreenerSession:
     def full_text_search(self, query: str) -> list[dict]:
         """-> [{company, symbol, url}, ...]. Raw search hits, no relevance filter."""
         resp = self.client.get(f"{BASE_URL}/full-text-search/", params={"q": query})
+        if resp.status_code in (429, 403):
+            raise RateLimitedError(
+                f"got {resp.status_code} for query {query!r} — "
+                f"blocked/rate-limited, not a real empty result"
+            )
+        resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
         results = []
@@ -139,7 +149,11 @@ def run(names: list[str], out_dir: Path | None):
     with ScreenerSession(username, password) as sess:
         for i, name in enumerate(names):
             log.info("searching: %s", name)
-            hits = sess.full_text_search(name)
+            try:
+                hits = sess.full_text_search(name)
+            except RateLimitedError as e:
+                log.warning("skip %r: %s", name, e)
+                continue
             print(f"\n=== {name} ({len(hits)} hits) ===")
             for h in hits:
                 print(f"  {h['symbol']:<15} {h['company']}")
