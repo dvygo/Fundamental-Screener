@@ -21,6 +21,12 @@ PR zip, PE, etc.).
 > One folder per day. **Never skip a day** — each day's prices/52-week/gainers
 > exist only in that day's file; a later download cannot recover a missed day.
 
+> **Download with a 1-day lag, not same-day.** NSE publishes this bundle
+> progressively — confirmed: a same-day pull for date D got only 8/22 files
+> (missing bhavcopy, PR-zip, security master); pulling the *next* day got the
+> complete 22. So: download **date D's files on D+1 or later**, never on D
+> itself, or you'll silently get a partial drop.
+
 ---
 
 ## STEP 2 — WEEKLY filings (once a week)
