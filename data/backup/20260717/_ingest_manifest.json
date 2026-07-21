@@ -1,0 +1,133 @@
+{
+  "date": "20260717",
+  "ingested_at": "2026-07-20T11:41:54+00:00",
+  "source_folder": "C:\\Users\\PC\\Desktop\\CLAUDE2\\Fundamental-Screener\\data\\raw\\bod\\20260717",
+  "bucket": "raw",
+  "files": {
+    "BhavCopy_NSE_CM_0_0_0_20260717_F_0000.csv.zip": {
+      "sha256": "3e11c183125fb8710316f4de32e9a0e758796ddd6c5ff9567f95b663c114ebe9",
+      "size": 192147,
+      "key": "20260717/BhavCopy_NSE_CM_0_0_0_20260717_F_0000.csv.zip"
+    },
+    "C_CATG_JUL2026.T01": {
+      "sha256": "92e026dea96edef17d08dd3fdf2ea37ffc45760c32b7ccf6f6f464510beb2d65",
+      "size": 434805,
+      "key": "20260717/C_CATG_JUL2026.T01"
+    },
+    "C_VAR1_17072026_1.DAT": {
+      "sha256": "a7da00cf8ca28ab26196af6b7ff8b69b9d6bc18a9257023add61e4b9a9cfe62e",
+      "size": 1084040,
+      "key": "20260717/C_VAR1_17072026_1.DAT"
+    },
+    "C_VAR1_17072026_2.DAT": {
+      "sha256": "1cfe72da9863b27725661b1e12470a15f64f00025820ace6b9529b601e181fea",
+      "size": 1083861,
+      "key": "20260717/C_VAR1_17072026_2.DAT"
+    },
+    "C_VAR1_17072026_3.DAT": {
+      "sha256": "c61ea06d9856f12196e9b08934ea107b14910fb40d01c4391111768ffaf686fb",
+      "size": 1083861,
+      "key": "20260717/C_VAR1_17072026_3.DAT"
+    },
+    "C_VAR1_17072026_4.DAT": {
+      "sha256": "ddd246e907de28522be98b22e8743ae2877264339120b5a9fe8b97b947ff9004",
+      "size": 1083863,
+      "key": "20260717/C_VAR1_17072026_4.DAT"
+    },
+    "C_VAR1_17072026_5.DAT": {
+      "sha256": "893ea0195e1d126ac4f8f786a6823749dd4957a0cc2c581b6e7f0004d0ade78b",
+      "size": 1083865,
+      "key": "20260717/C_VAR1_17072026_5.DAT"
+    },
+    "C_VAR1_17072026_6.DAT": {
+      "sha256": "02d566bbefd08dd06fddd43a2298b44c12ae17d15fd4b2abbe8a369861c78f02",
+      "size": 1083865,
+      "key": "20260717/C_VAR1_17072026_6.DAT"
+    },
+    "CF-FR-equities-20-06-2026-to-20-07-2026.csv": {
+      "sha256": "928c72ae6c80284c376fc0218bdbb191117730e9b67d3dd87bc1146e3b27fd64",
+      "size": 1259,
+      "key": "20260717/CF-FR-equities-20-06-2026-to-20-07-2026.csv"
+    },
+    "CF-Insider-Trading-equities-20-06-2026-to-20-07-2026.csv": {
+      "sha256": "70cc783cebfa7785cf50bf80d64630893efbbfb3cbce1e6e6baf3d2a3e61575b",
+      "size": 138056,
+      "key": "20260717/CF-Insider-Trading-equities-20-06-2026-to-20-07-2026.csv"
+    },
+    "CF-Shareholding-Pattern-equities-20-06-2026-to-20-07-2026.csv": {
+      "sha256": "ade301f9b13644d56aaf151c929c635c3d7c33ce11127fde2d4c8f2f4c1174ab",
+      "size": 375517,
+      "key": "20260717/CF-Shareholding-Pattern-equities-20-06-2026-to-20-07-2026.csv"
+    },
+    "CM_52_wk_High_low_17072026.csv": {
+      "sha256": "78e05d755086046b9f5b5106fd387b58bf3e494c83248c9fe17eb8a92df235d2",
+      "size": 305478,
+      "key": "20260717/CM_52_wk_High_low_17072026.csv"
+    },
+    "CMVOLT_17072026.CSV": {
+      "sha256": "477ded46bd2547c7f35791c34923bd366d9d559b51c472b6722b150d76e0b956",
+      "size": 293551,
+      "key": "20260717/CMVOLT_17072026.CSV"
+    },
+    "CSQR_M_17072026.csv": {
+      "sha256": "8d8030fb778d5243abf657bb79f6219163168dad09da21717f0f8023d2ead263",
+      "size": 358925,
+      "key": "20260717/CSQR_M_17072026.csv"
+    },
+    "FCM_INTRM_BC17072026.DAT": {
+      "sha256": "204fe5d8f25cae7423c5ecbccd0cfa3a719a3d09164da3d82d4880c21d367372",
+      "size": 668070,
+      "key": "20260717/FCM_INTRM_BC17072026.DAT"
+    },
+    "MA170726.csv": {
+      "sha256": "c3b7bcb47e176aedc8cbc0d3092291c8d955bbd979792c7dde71a5c009f04dc3",
+      "size": 220056,
+      "key": "20260717/MA170726.csv"
+    },
+    "MTO_17072026.DAT": {
+      "sha256": "fc9584005c2fc21e766c6958693ff87242776171ace8bcb0cbda0d7571ae5808",
+      "size": 115707,
+      "key": "20260717/MTO_17072026.DAT"
+    },
+    "NSE_CM_security_17072026.csv.gz": {
+      "sha256": "aa50e2c736749d055d33a3fbadfd5b8230b4b5c9cd98d8de6af948a3846a3f0d",
+      "size": 1467388,
+      "key": "20260717/NSE_CM_security_17072026.csv.gz"
+    },
+    "PE_170726.csv": {
+      "sha256": "8b102f42ac9af29cd75fa45c8368533fdd6cc3fcf7dfc990fab3b0bdf28ff8f3",
+      "size": 45317,
+      "key": "20260717/PE_170726.csv"
+    },
+    "PR170726.zip": {
+      "sha256": "ce740d48ce28f78e21b2fde05c8e9746187366e5f180994921df645b3467cedf",
+      "size": 618948,
+      "key": "20260717/PR170726.zip"
+    },
+    "REG1_IND170726.csv": {
+      "sha256": "c1ffe7e59a74361efb3984629ac8a296bcbe37498984f56dee4086cf03ef39e3",
+      "size": 574368,
+      "key": "20260717/REG1_IND170726.csv"
+    },
+    "REG_IND170726.csv": {
+      "sha256": "52d9a12dc8cb3502bf99417cd8af94a63852c17b64972da269a96ee477309c41",
+      "size": 274527,
+      "key": "20260717/REG_IND170726.csv"
+    },
+    "sec_bhavdata_full_17072026.csv": {
+      "sha256": "70583bd5beb9b1754b40f00a05e11fb2ba63d778fa242c5e86183165d270c379",
+      "size": 369930,
+      "key": "20260717/sec_bhavdata_full_17072026.csv"
+    },
+    "shortselling_17072026.csv": {
+      "sha256": "1c93dc0a98032d489c9dc024204c9c65d71311666835e9fd4c8f1e669bd5468c",
+      "size": 4007,
+      "key": "20260717/shortselling_17072026.csv"
+    },
+    "sme17072026.csv": {
+      "sha256": "ea106745cd4a205430a7a72bd5dc34e5e23f2b312aa25d693e9f6b59b2e8a870",
+      "size": 78043,
+      "key": "20260717/sme17072026.csv"
+    }
+  }
+}

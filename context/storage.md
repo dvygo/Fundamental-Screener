@@ -57,5 +57,8 @@ python src/ingest.py --replay data/backup
 - **Date is the partition key** post-processing: `raw/YYYYMMDD/` in MinIO,
   `backup/YYYYMMDD/` on disk, a date column in Delta. Keep the exchange's
   original filename inside the dated folder.
-- `bod/` and `backup/` are committed (record of what was ingested and served);
-  `data/raw/` (cached scrape HTML) stays local.
+- **Backup payload stays local; only its `_ingest_manifest.json` is committed.**
+  The backup folder is a binary DR mirror (raw csv/zip + bronze parquet) — too
+  heavy for git. The per-day sha manifest is the committed audit record of what
+  was ingested; the bytes live on disk + MinIO. `data/raw/` (cached scrape HTML,
+  cached XBRL) stays local too.

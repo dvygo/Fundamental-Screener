@@ -9,6 +9,15 @@ venv/
 # re-hitting screener.in on every parse). Parsed outputs ARE committed.
 data/raw/
 
+# Bronze parquet — derived from raw, lives in MinIO, rebuildable. Not committed.
+data/bronze/
+
+# Backup = disk DR mirror of MinIO (binary raw + parquet). Don't commit the
+# payload (git would bloat daily). Commit only the sha manifest — the audit record.
+data/backup/**
+!data/backup/**/
+!data/backup/**/_ingest_manifest.json
+
 # Local secrets
 .env
 docker/.env
