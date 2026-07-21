@@ -61,8 +61,30 @@ v2 MinIO path (MinIO currently torn down). Raw drop stays pristine.
 
 ## Screener (fundamentals narrative, separate from NSE)
 - [ ] `screener_company.py` already parses ratios/financials. Extend for:
-  - [ ] B1 insider (cross-check vs NSE), B3 top PM/asset-manager holdings.
-- [ ] B3 source decision: screener "Shareholding" vs AMFI monthly MF portfolios.
+  - [ ] B1 insider (cross-check vs NSE).
+  - [ ] **B3 — fund manager INVOLVEMENT only** (scope narrowed): "which companies
+        is this fund manager associated with" — a lightweight signal, not full
+        holdings. Prior art studied: `Aman19960110/stock_performance_dashboard`
+        does this via `screener.in/full-text-search/?q=<manager name>`, dumping
+        raw search-hit company/symbol matches (no relevance filter, no dedup) —
+        a search-engine hack, not a structured query. Usable as a starting
+        pattern; needs unauthenticated version (their client force-logs-in,
+        which is a bigger ToS step than our public-page stance — see
+        `context/sources.md`).
+
+## B7/B8 — fund manager REAL holdings (separate, bigger, later)
+- [ ] Investigated: `amfiindia.com/online-center/portfolio-disclosure` is a
+      **directory, not a data host** — confirmed via Playwright: clicking an
+      AMC tile (e.g. ICICI Prudential) opens a new tab to that AMC's OWN site
+      (`icicipruamc.com/media-center/downloads?...FortnightlyPortfolioDisclosures`).
+      SEBI's "publish on AMC site AND AMFI site" mandate is satisfied by AMFI
+      linking out, not mirroring files.
+- [ ] Real per-scheme holdings (with fund manager name, per SEBI's mandated
+      format) means scraping **~40 individual AMC websites**, each its own page
+      structure/URL pattern. Bigger lift than B3 — scope as its own project
+      phase, not a B3 blocker.
+- [ ] Options when tackled: full 40-AMC discovery, or top-N by AUM (SBI, ICICI,
+      HDFC, Nippon) for majority coverage without full fan-out.
 
 ## Security master (join key)
 - [ ] one table mapping symbol ↔ ISIN ↔ BSE scripcode ↔ screener code.
