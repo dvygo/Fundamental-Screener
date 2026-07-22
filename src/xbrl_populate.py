@@ -1,14 +1,22 @@
 """XBRL populator — fetch each day's filing XBRL, land every fact, lossless.
 
 ELT, not ETL: nothing is chosen or pivoted here. Every (context, tag, value)
-triple from every filing (insider + shareholding + results) lands as one row
-in a single per-day Parquet file:
+triple from a filing type's XBRLs lands as one row in a Parquet file named
+after — and sitting next to — the source CSV it came from:
 
-    data/extracts/<date>/CF-*.csv    (filing indexes, hold XBRL urls)
+    data/extracts/<date>/CF-Insider-Trading-<date>.csv        (raw index)
         │  fetch each .xml (cached, paced, resumable)
         │  shred -> one row per fact, nothing dropped
         ▼
-    data/facts/<date>/xbrl_facts.parquet
+    data/extracts/<date>/CF-Insider-Trading-<date>.parquet    (derived facts)
+
+    (same pairing for CF-Shareholding-Pattern-<date> and CF-FR-<date>)
+
+Note the asymmetry this creates: extracts/ was originally "pure raw, rebuilds
+from data/raw/bod in seconds, no network." These .parquet files are derived —
+rebuilding them means re-fetching XBRL (paced, ~3s/filing). Still landed here
+because they're tightly coupled to their source CSV; just know the folder is
+no longer uniformly cheap to regenerate.
 
 Why lossless instead of a pivoted/fixed-column table: checked empirically
 across 139 real shareholding filings — a fixed category map (13 columns)
@@ -19,10 +27,10 @@ lossless long table survives that; a hardcoded pivot has to be maintained
 forever and quietly loses data it doesn't know about yet.
 
 Presentation (the "screener.in-style" per-company table) is a SQL pivot at
-query time over this file, not baked in at populate time — e.g.:
+query time over these files, not baked in at populate time — e.g.:
 
     select category_member, round(try_cast(value as double) * 100, 2) as pct
-    from 'data/facts/*/xbrl_facts.parquet'
+    from 'data/extracts/*/CF-Shareholding-Pattern-*.parquet'
     where source_symbol = 'BHARTIARTL' and tag = 'ShareholdingAsA...'
 
 Fetched XML is cached under data/raw/xbrl/ (gitignored) so re-runs don't re-hit
@@ -55,8 +63,14 @@ log = logging.getLogger("xbrl_populate")
 
 ROOT = Path(__file__).resolve().parents[1]
 EXTRACTS = ROOT / "data" / "extracts"
-FACTS = ROOT / "data" / "facts"
 XML_CACHE = ROOT / "data" / "raw" / "xbrl"
+
+# filing_type -> output stem, matching the source CSV's own naming exactly
+TYPE_STEM = {
+    "insider": "CF-Insider-Trading",
+    "shareholding": "CF-Shareholding-Pattern",
+    "results": "CF-FR",
+}
 
 DELAY = 3.0
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -250,24 +264,29 @@ def run(date: str, types, limit: int):
     if not facts:
         raise SystemExit("no facts produced")
 
-    out_dir = FACTS / date
-    out_dir.mkdir(parents=True, exist_ok=True)
-    pq = out_dir / "xbrl_facts.parquet"
     cols = ["filing_type", "source_symbol", "source_company", "xbrl_url",
             "tag", "value", "context_ref", "period_type", "period_start",
             "period_end", "period_instant", "unit", "decimals", "dims"]
+    by_ftype = defaultdict(list)
+    for f in facts:
+        by_ftype[f["filing_type"]].append(f)
+
     con = duckdb.connect()
-    con.execute("CREATE TABLE facts (" + ", ".join(f"{c} VARCHAR" for c in cols) + ")")
-    con.executemany(
-        "INSERT INTO facts VALUES (" + ",".join("?" * len(cols)) + ")",
-        [[f.get(c) for c in cols] for f in facts],
-    )
-    con.execute(f"COPY facts TO '{pq.as_posix()}' (FORMAT parquet)")
-    n = con.execute("SELECT count(*) FROM facts").fetchone()[0]
+    for ftype, rows in by_ftype.items():
+        stem = TYPE_STEM.get(ftype, ftype)
+        pq = folder / f"{stem}-{date}.parquet"
+        con.execute("CREATE OR REPLACE TABLE facts ("
+                    + ", ".join(f"{c} VARCHAR" for c in cols) + ")")
+        con.executemany(
+            "INSERT INTO facts VALUES (" + ",".join("?" * len(cols)) + ")",
+            [[r.get(c) for c in cols] for r in rows],
+        )
+        con.execute(f"COPY facts TO '{pq.as_posix()}' (FORMAT parquet)")
+        log.info("wrote %s  (%d facts)", pq.name, len(rows))
     con.close()
 
-    log.info("wrote %s  (%d facts, %d filings)", pq, n, len(jobs) - failed)
-    log.info("done: fetched %d, cached %d, failed %d", fetched, cached, failed)
+    log.info("done %s: %d facts total, fetched %d, cached %d, failed %d",
+             date, len(facts), fetched, cached, failed)
 
 
 if __name__ == "__main__":
