@@ -59,3 +59,25 @@ All ELT: DuckDB SQL over bhavcopy landed in MinIO (`s3://raw/*/`).
 
 > N-day screens (2, 3, 5) grow correct as daily bhavcopy folders accumulate;
 > with one day landed, N-day count = 1 for each triggered stock.
+
+---
+
+# AMFI sources to study (found 2026-07-22, all verified live)
+
+- **https://portal.amfiindia.com/spages/NAVAll.txt** — gives the complete report,
+  EOD/latest. This is the scheme master: every live scheme, Scheme Code, ISIN
+  (growth + dividend), Scheme Name, NAV, Date — 17k+ lines, updated daily.
+  Not a flat table — AMC name and category appear as bare header lines between
+  data rows, need stateful parsing (track "current AMC" while walking down).
+  Decide: BOD or EOD pull for this project's cadence.
+- **https://www.amfiindia.com/net-asset-value** — check out, likely a UI wrapper
+  around the same NAV data (unverified structure beyond page-load).
+- **https://www.amfiindia.com/net-asset-value/nav-history** — check out,
+  presumably historical NAV lookup (unverified structure beyond page-load).
+- **https://www.amfiindia.com/otherdata/scheme-details** — check out, possibly
+  richer per-scheme metadata than NAVAll.txt (unverified structure).
+
+Context: none of these give fund-MANAGER names — confirmed AMFI's
+portfolio-disclosure and factsheet pages both just link out to each AMC's own
+site (checked live, both bounce to e.g. icicipruamc.com). Manager-to-scheme
+binding stays a 40-AMC problem (B7/8), not solved by any AMFI page.
