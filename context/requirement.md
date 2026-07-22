@@ -1,18 +1,18 @@
 From Bhav copy
 
-1. %2 week high triogger last day 
-2. Last n days filter >> no of events of 52 week high trigger
-3. same 2 points for 52 week low
+1. %2 week high triogger last day (clarify)
+2. Last n days filter >> no of events of 52 week high trigger OK
+3. same 2 points for 52 week low OK
 
-4. Top gainers and losers ( different tables)
-5. Last n days how many evernts of occiurence in top gainers
+4. Top gainers and losers ( different tables) [LIVE or EOD, Clarify]
+5. Last n days how many evernts of occurence in top gainers [EOD only]
 
 
 From screener.com 
 
-1. Insider Buying >> Qty of share and value
-2. Promoteer holding and change in promoter holding
-3. HOldings of top Portfolio managers and asset managers
+1. Insider Buying >> Qty of share and value OK NSE
+2. Promoteer holding and change in promoter holding OK NSE
+3. HOldings of top Portfolio managers and asset managers [Clarify Source]
 
 4. on lcicking on any of the synmbol from any of the avoe list 
   MArket cap, current price , stock pe , change in promoter holdiong, eps, change in ffii , change in dii, change in promoter last 3 years, current promoter hldg

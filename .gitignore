@@ -13,8 +13,9 @@ data/raw/
 # drop, rebuildable, feeds MinIO. Not committed.
 data/extracts/
 
-# Bronze parquet — derived from raw, lives in MinIO, rebuildable. Not committed.
-data/bronze/
+# XBRL facts — lossless per-day Parquet, rebuildable from data/extracts + the
+# XML cache (src/xbrl_populate.py). Queried directly (DuckDB glob); MinIO is v2.
+data/facts/
 
 # Generated NSE bulk-download links (regeneratable from src/nse_report_links.py).
 data/nse_links/
