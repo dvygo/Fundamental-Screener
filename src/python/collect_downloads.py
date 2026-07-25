@@ -35,7 +35,7 @@ from extract import place  # reuse the same content-aware writer as process UNO
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("collect_downloads")
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 RAW = ROOT / "data" / "raw" / "bod"
 DEFAULT_DOWNLOADS = Path.home() / "Downloads"
 

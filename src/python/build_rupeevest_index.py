@@ -35,7 +35,7 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("build_rupeevest_index")
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = ROOT / "data" / "raw" / "rupeevest"
 DETAIL_DIR = RAW_DIR / "stock_detail"
 OUT_DIR = ROOT / "data" / "extracts" / "rupeevest"

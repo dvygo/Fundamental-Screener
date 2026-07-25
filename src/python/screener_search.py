@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("screener_search")
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 BASE_URL = "https://www.screener.in"
 REQUEST_DELAY = 4.0  # same pacing discipline as screener_company.py
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

@@ -45,7 +45,7 @@ from build_rupeevest_index import (
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("rupeevest_stock_detail")
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = ROOT / "data" / "raw" / "rupeevest"
 DETAIL_DIR = RAW_DIR / "stock_detail"
 
