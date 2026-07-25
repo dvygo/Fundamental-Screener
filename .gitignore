@@ -34,6 +34,12 @@ docker/.env
 # Crawl4AI / Playwright caches
 .crawl4ai/
 
+# Node.js (src/nodejs API, src/nextjs frontend) — deps + build output, rebuildable
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+
 # OS / editor
 .DS_Store
 Thumbs.db
