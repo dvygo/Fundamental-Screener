@@ -12,7 +12,7 @@ From screener.com
 
 1. Insider Buying >> Qty of share and value OK NSE
 2. Promoteer holding and change in promoter holding OK NSE
-3. HOldings of top Portfolio managers and asset managers [Clarify Source]
+3. Interests of top Portfolio managers and asset managers
 
 4. on lcicking on any of the synmbol from any of the avoe list 
   MArket cap, current price , stock pe , change in promoter holdiong, eps, change in ffii , change in dii, change in promoter last 3 years, current promoter hldg
