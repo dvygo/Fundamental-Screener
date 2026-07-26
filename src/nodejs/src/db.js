@@ -53,24 +53,40 @@ async function createConnection() {
     WHERE trim(series) = 'EQ'
   `);
 
+  // One row per (symbol, high-date) = the value from the LATEST daily snapshot.
+  // adjusted_52_week_high is corporate-action-adjusted and changes across files
+  // for the same high-date after a bonus/split; a plain DISTINCT would keep both
+  // the stale and adjusted values, so we keep only the most-recent file's figure.
   await connection.run(`
     CREATE OR REPLACE VIEW hi52 AS
-    SELECT DISTINCT trim(symbol) AS symbol, trim(series) AS series,
-           ${D('_52_week_high_date')} AS event_date,
-           TRY_CAST(replace(adjusted_52_week_high, ' ', '') AS DOUBLE) AS price
-    FROM read_csv('${wk}', header=true, all_varchar=true, normalize_names=true,
-                  skip=2, union_by_name=true)
-    WHERE ${D('_52_week_high_date')} IS NOT NULL AND trim(series) = 'EQ'
+    SELECT symbol, series, event_date, price FROM (
+      SELECT trim(symbol) AS symbol, trim(series) AS series,
+             ${D('_52_week_high_date')} AS event_date,
+             TRY_CAST(replace(adjusted_52_week_high, ' ', '') AS DOUBLE) AS price,
+             row_number() OVER (
+               PARTITION BY trim(symbol), ${D('_52_week_high_date')}
+               ORDER BY regexp_extract(filename, '/([0-9]{8})/', 1) DESC
+             ) AS rn
+      FROM read_csv('${wk}', header=true, all_varchar=true, normalize_names=true,
+                    skip=2, filename=true, union_by_name=true)
+      WHERE ${D('_52_week_high_date')} IS NOT NULL AND trim(series) = 'EQ'
+    ) WHERE rn = 1
   `);
 
   await connection.run(`
     CREATE OR REPLACE VIEW lo52 AS
-    SELECT DISTINCT trim(symbol) AS symbol, trim(series) AS series,
-           ${D('_52_week_low_dt')} AS event_date,
-           TRY_CAST(replace(adjusted_52_week_low, ' ', '') AS DOUBLE) AS price
-    FROM read_csv('${wk}', header=true, all_varchar=true, normalize_names=true,
-                  skip=2, union_by_name=true)
-    WHERE ${D('_52_week_low_dt')} IS NOT NULL AND trim(series) = 'EQ'
+    SELECT symbol, series, event_date, price FROM (
+      SELECT trim(symbol) AS symbol, trim(series) AS series,
+             ${D('_52_week_low_dt')} AS event_date,
+             TRY_CAST(replace(adjusted_52_week_low, ' ', '') AS DOUBLE) AS price,
+             row_number() OVER (
+               PARTITION BY trim(symbol), ${D('_52_week_low_dt')}
+               ORDER BY regexp_extract(filename, '/([0-9]{8})/', 1) DESC
+             ) AS rn
+      FROM read_csv('${wk}', header=true, all_varchar=true, normalize_names=true,
+                    skip=2, filename=true, union_by_name=true)
+      WHERE ${D('_52_week_low_dt')} IS NOT NULL AND trim(series) = 'EQ'
+    ) WHERE rn = 1
   `);
 
   // official company name per symbol (NSE security master), exact FinInstrmNm

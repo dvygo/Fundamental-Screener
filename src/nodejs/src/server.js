@@ -23,10 +23,13 @@ import {
   screen4a_gainers,
   screen4b_losers,
   screen5_gainersRecurrence,
+  screen5b_losersRecurrence,
+  screen_high52wCombined,
+  screen_low52wCombined,
   screen6a_upperCircuit,
   screen6b_lowerCircuit,
 } from './screens.js';
-import { searchCompanies, companyInsider, companyShareholding, companyDrilldown, companyPromoters, listSeries } from './companies.js';
+import { searchCompanies, companyInsider, companyShareholding, companyDrilldown, companyPromoters, listSeries, insiderRecent } from './companies.js';
 import { corporateActions } from './corporate.js';
 import { getNews } from './news.js';
 import { listFundManagers, listFirms, firmSearch } from './firms.js';
@@ -65,16 +68,28 @@ function route(handler) {
   };
 }
 
-app.get('/api/screens/52w-high', route(() => screen1_high52wLastDay()));
+// Combined 52-week high/low (req.txt): current price + 52w-high value +
+// previous 52w-high value + new-high event count/first/last, over the last n days.
+app.get('/api/screens/52w-high', route((req, res) => {
+  const n = intParam(req, res, 'n', 30);
+  if (n === null) return null;
+  return screen_high52wCombined(n);
+}));
 
+app.get('/api/screens/52w-low', route((req, res) => {
+  const n = intParam(req, res, 'n', 30);
+  if (n === null) return null;
+  return screen_low52wCombined(n);
+}));
+
+// Kept for compatibility / the Python CLI parity (unused by the Markets UI now).
+app.get('/api/screens/52w-high/last', route(() => screen1_high52wLastDay()));
 app.get('/api/screens/52w-high/events', route((req, res) => {
   const n = intParam(req, res, 'n', 30);
   if (n === null) return null;
   return screen2_high52wEvents(n);
 }));
-
-app.get('/api/screens/52w-low', route(() => screen3a_low52wLastDay()));
-
+app.get('/api/screens/52w-low/last', route(() => screen3a_low52wLastDay()));
 app.get('/api/screens/52w-low/events', route((req, res) => {
   const n = intParam(req, res, 'n', 30);
   if (n === null) return null;
@@ -98,6 +113,13 @@ app.get('/api/screens/gainers/recurrence', route((req, res) => {
   const top = intParam(req, res, 'top', 20);
   if (n === null || top === null) return null;
   return screen5_gainersRecurrence(n, top);
+}));
+
+app.get('/api/screens/losers/recurrence', route((req, res) => {
+  const n = intParam(req, res, 'n', 30);
+  const top = intParam(req, res, 'top', 20);
+  if (n === null || top === null) return null;
+  return screen5b_losersRecurrence(n, top);
 }));
 
 app.get('/api/corporate-actions', route(() => corporateActions()));
@@ -149,6 +171,13 @@ app.get('/api/companies/:symbol/insider', route((req) => companyInsider(req.para
 app.get('/api/companies/:symbol/shareholding', route((req) => companyShareholding(req.params.symbol.toUpperCase())));
 
 app.get('/api/companies/:symbol/promoters', route((req) => companyPromoters(req.params.symbol.toUpperCase())));
+
+// Insider Centric — market-wide insider trades filed in the last `days` sessions.
+app.get('/api/insider/recent', route((req, res) => {
+  const days = intParam(req, res, 'days', 7);
+  if (days === null) return null;
+  return insiderRecent(days);
+}));
 
 app.listen(PORT, () => {
   console.log(`Fundamental-Screener API listening on :${PORT}`);

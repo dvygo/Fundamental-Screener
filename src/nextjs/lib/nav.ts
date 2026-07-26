@@ -9,6 +9,7 @@ export interface NavItem {
 export const NAV: NavItem[] = [
   { href: "/", label: "Markets", letter: "M" },
   { href: "/stock-centric", label: "Stock Centric", letter: "S" },
+  { href: "/insider-centric", label: "Insider Centric", letter: "I" },
   { href: "/corporate-actions", label: "Corporate Actions", letter: "C" },
   { href: "/news", label: "News", letter: "N" },
   { href: "/firms", label: "Firms & Asset Managers", letter: "F" },

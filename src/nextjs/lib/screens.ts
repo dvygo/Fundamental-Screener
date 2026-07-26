@@ -25,47 +25,41 @@ export interface ScreenConfig {
 
 export const SCREENS: ScreenConfig[] = [
   {
-    id: "1",
-    label: "52-Week Highs & Lows",
+    id: "52w-high",
+    label: "52-Week High",
     usesN: true,
     panelGroups: [
-      [
-        { title: "Highs — last session", path: () => "/screens/52w-high" },
-        { title: "Lows — last session", path: () => "/screens/52w-low" },
-      ],
-      [
-        { title: "Highs — N-day event count", path: ({ n }) => `/screens/52w-high/events?n=${n}` },
-        { title: "Lows — N-day event count", path: ({ n }) => `/screens/52w-low/events?n=${n}` },
-      ],
+      [{ title: "New 52-week highs — last N days", path: ({ n }) => `/screens/52w-high?n=${n}` }],
     ],
   },
   {
-    id: "2",
-    label: "Gainers & Losers",
-    usesTop: true,
+    id: "52w-low",
+    label: "52-Week Low",
+    usesN: true,
     panelGroups: [
-      [
-        { title: "Top Gainers — last session", path: ({ top }) => `/screens/gainers?top=${top}` },
-        { title: "Top Losers — last session", path: ({ top }) => `/screens/losers?top=${top}` },
-      ],
+      [{ title: "New 52-week lows — last N days", path: ({ n }) => `/screens/52w-low?n=${n}` }],
     ],
   },
   {
-    id: "3",
-    label: "Gainers — N-day recurrence",
+    id: "gainers-nday",
+    label: "Gainers — N-Day",
     usesN: true,
     usesTop: true,
     panelGroups: [
-      [
-        {
-          title: "Recurrence in top gainers",
-          path: ({ n, top }) => `/screens/gainers/recurrence?n=${n}&top=${top}`,
-        },
-      ],
+      [{ title: "Recurrence in top gainers", path: ({ n, top }) => `/screens/gainers/recurrence?n=${n}&top=${top}` }],
     ],
   },
   {
-    id: "4",
+    id: "losers-nday",
+    label: "Losers — N-Day",
+    usesN: true,
+    usesTop: true,
+    panelGroups: [
+      [{ title: "Recurrence in top losers", path: ({ n, top }) => `/screens/losers/recurrence?n=${n}&top=${top}` }],
+    ],
+  },
+  {
+    id: "circuit",
     label: "Upper & Lower Circuit",
     panelGroups: [
       [

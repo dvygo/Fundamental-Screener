@@ -24,11 +24,17 @@ const ONDEMAND: SWRConfiguration = {
 const DEFAULT_STOCK: CompanyMatch = { symbol: "RELIANCE", company_name: "RELIANCE INDUSTRIES LTD", isin: "INE002A01018" };
 const label = (m: CompanyMatch) => `${m.symbol} (${m.company_name}) (${m.isin})`;
 
-export default function StockCentric() {
-  const [query, setQuery] = useState(label(DEFAULT_STOCK));
+export default function StockCentric({ initialSymbol }: { initialSymbol?: string }) {
+  // A deep link (?symbol=XYZ, passed from the server page) selects that stock on
+  // the very FIRST render, so the RELIANCE default never renders or fetches. The
+  // effect below then upgrades the minimal {symbol} to a full name/ISIN label.
+  const initial: CompanyMatch = initialSymbol
+    ? { symbol: initialSymbol.toUpperCase(), company_name: initialSymbol.toUpperCase(), isin: "" }
+    : DEFAULT_STOCK;
+  const [query, setQuery] = useState(initialSymbol ? initialSymbol.toUpperCase() : label(DEFAULT_STOCK));
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [series, setSeries] = useState("EQ");
-  const [selected, setSelected] = useState<CompanyMatch | null>(DEFAULT_STOCK);
+  const [selected, setSelected] = useState<CompanyMatch | null>(initial);
   const [showResults, setShowResults] = useState(false);
   const [highlightIdx, setHighlightIdx] = useState(0);
 
@@ -37,29 +43,29 @@ export default function StockCentric() {
     return () => clearTimeout(t);
   }, [query]);
 
-  // Deep link from the Markets tables (?symbol=XYZ): resolve it to a full match
-  // (for the name/ISIN label) and select it in place of the RELIANCE default.
+  // Resolve the deep-linked symbol to a full match (name/ISIN) for the label.
+  // selected.symbol is already correct from render 1, so this only enriches the
+  // display — the drill-down/promoter fetches already targeted the right symbol.
   useEffect(() => {
-    const sym = new URLSearchParams(window.location.search).get("symbol");
-    if (!sym) return;
-    const S = sym.toUpperCase();
+    if (!initialSymbol) return;
+    const S = initialSymbol.toUpperCase();
     let cancelled = false;
     (async () => {
-      let chosen: CompanyMatch = { symbol: S, company_name: S, isin: "" };
       try {
         const matches = await searchCompanies(S, "ALL");
-        chosen = matches.find((m) => m.symbol.toUpperCase() === S) ?? matches[0] ?? chosen;
+        const chosen = matches.find((m) => m.symbol.toUpperCase() === S) ?? matches[0];
+        if (chosen && !cancelled) {
+          setSelected(chosen);
+          setQuery(label(chosen));
+        }
       } catch {
-        /* keep the minimal fallback — drill-down/promoters only need the symbol */
+        /* keep the minimal {symbol} — drill-down/promoters only need the symbol */
       }
-      if (cancelled) return;
-      setSelected(chosen);
-      setQuery(label(chosen));
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialSymbol]);
 
   const { data: seriesList } = useSWR("series", listSeries, { revalidateOnFocus: false });
 

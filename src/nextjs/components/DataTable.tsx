@@ -123,6 +123,10 @@ function SymbolCell(params: ICellRendererParams) {
   );
 }
 
+// "event_date" -> "Event Date", "high_52w" -> "High 52w" — readable headers from
+// the snake_case API keys.
+const humanize = (field: string) => field.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
 function buildColumns(rows: Row[], linkSymbol: boolean): ColDef[] {
   const cols = Object.keys(rows[0]).map((field) => {
     const sample = rows.find((r) => r[field] !== null && r[field] !== undefined)?.[field];
@@ -131,6 +135,7 @@ function buildColumns(rows: Row[], linkSymbol: boolean): ColDef[] {
 
     const colDef: ColDef = {
       field,
+      headerName: humanize(field),
       sortable: true,
       filter: true,
       resizable: true,

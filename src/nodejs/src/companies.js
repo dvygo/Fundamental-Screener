@@ -94,6 +94,47 @@ export function companyInsiderOwn(symbol) {
   );
 }
 
+// Insider Centric (market-wide) — every insider trade filed in the last `days`
+// sessions across ALL symbols, from our own NSE PIT XBRL store (data/store/
+// insider.parquet). Buys, sells and pledge events, newest first. Anchored to the
+// latest filing date in the data (not wall-clock) so it always returns the most
+// recent window even if the backfill is a day behind. `days` is a validated
+// positive int (interpolated - DuckDB INTERVAL doesn't take bound params).
+export function insiderRecent(days) {
+  return queryJson(`
+    WITH main AS (
+      SELECT xbrl_url, source_symbol AS symbol, source_company AS company,
+             max(CASE WHEN tag = 'DateOfFiling' THEN value END) AS filing_date
+      FROM insider_facts
+      WHERE context_ref = 'MainI'
+      GROUP BY xbrl_url, source_symbol, source_company
+    ),
+    disc AS (
+      SELECT xbrl_url, context_ref,
+             max(CASE WHEN tag = 'NameOfThePerson' THEN value END) AS person,
+             max(CASE WHEN tag = 'CategoryOfPerson' THEN value END) AS category,
+             max(CASE WHEN tag = 'SecuritiesAcquiredOrDisposedTransactionType' THEN value END) AS txn_type,
+             max(CASE WHEN tag = 'SecuritiesAcquiredOrDisposedNumberOfSecurity' THEN value END) AS qty,
+             max(CASE WHEN tag = 'SecuritiesAcquiredOrDisposedValueOfSecurity' THEN value END) AS value,
+             max(CASE WHEN tag = 'ModeOfAcquisitionOrDisposal' THEN value END) AS mode,
+             max(CASE WHEN tag = 'DateOfAllotmentAdviceOrAcquisitionOfSharesOrSaleOfSharesSpecifyToDate' THEN value END) AS txn_date
+      FROM insider_facts
+      WHERE context_ref LIKE 'Disclosure%'
+      GROUP BY xbrl_url, context_ref
+    ),
+    mx AS (SELECT max(TRY_CAST(filing_date AS DATE)) md FROM main)
+    SELECT m.filing_date, m.symbol, m.company, d.person, d.category, d.txn_type,
+           TRY_CAST(d.qty AS DOUBLE) AS qty, TRY_CAST(d.value AS DOUBLE) AS value,
+           d.mode, d.txn_date
+    FROM main m
+    JOIN disc d USING (xbrl_url)
+    CROSS JOIN mx
+    WHERE TRY_CAST(m.filing_date AS DATE) >= mx.md - INTERVAL ${days} DAY
+      AND d.person IS NOT NULL
+    ORDER BY m.filing_date DESC, m.symbol, d.context_ref
+  `);
+}
+
 // B4 - symbol drill-down: market cap, current price, stock P/E, EPS (price/PE),
 // and current % + change (latest filing vs prior) for promoter, FII
 // (InstitutionsForeign) and DII (InstitutionsDomestic). Daily metrics come from

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import useSWR from "swr";
 import { Input } from "@/components/ui/input";
 import { firmSearch, listFirms, listFundManagers, type Firm, type FirmSearchResult, type FirmType } from "@/lib/firms";
@@ -13,15 +14,41 @@ const FIRM_DROPDOWNS: { type: FirmType; label: string }[] = [
   { type: "ria", label: "Investment Advisers (RIA)" },
 ];
 
+// Deep link into Stock Centric for a result company (same target as the Markets ↗).
+const scHref = (symbol: string) => `/stock-centric?symbol=${encodeURIComponent(symbol)}`;
+
+// Small ↗ marking a Stock Centric deep link.
+function ScArrow() {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="inline align-[-1px]"
+    >
+      <path d="M7 17 17 7" />
+      <path d="M8 7h9v9" />
+    </svg>
+  );
+}
+
 // Which pick-list a selection came from (the four firm types, or the fund
 // managers). One selection is active at a time — picking in one dropdown resets
 // the rest to their placeholder.
 type PickSource = FirmType | "fm";
 
 export default function FirmsAssetManagers() {
-  const [query, setQuery] = useState("");
-  const [submitted, setSubmitted] = useState(""); // the term actually searched
+  // Default search so the tab isn't empty on load.
+  const [query, setQuery] = useState("Franklin Templeton");
+  const [submitted, setSubmitted] = useState("Franklin Templeton"); // the term actually searched
   const [pick, setPick] = useState<{ source: PickSource; value: string } | null>(null);
+  const [compact, setCompact] = useState(true); // compact (just names) by default
 
   const { data: managers, error: managersError } = useSWR("fund-managers", listFundManagers, {
     revalidateOnFocus: false,
@@ -107,6 +134,16 @@ export default function FirmsAssetManagers() {
         >
           Search
         </button>
+        {/* Compact = just company names, deep-linked into Stock Centric. */}
+        <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-base text-neutral-700">
+          <input
+            type="checkbox"
+            checked={compact}
+            onChange={(e) => setCompact(e.target.checked)}
+            className="h-4 w-4 accent-neutral-900"
+          />
+          Compact
+        </label>
       </div>
 
       {/* Four SEBI-firm pick-lists + fund managers — mutually exclusive: picking
@@ -172,34 +209,60 @@ export default function FirmsAssetManagers() {
               <span> · {data.total.toLocaleString("en-IN")} document matches (top results)</span>
             )}
           </div>
-          <ul className="divide-y divide-neutral-200 border-y border-neutral-200">
-            {companies.map((c) => (
-              <li key={c.symbol} className="py-3">
-                <div className="flex items-baseline gap-2">
-                  <a
-                    href={c.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-lg font-medium leading-snug text-neutral-900 hover:underline"
+          {compact ? (
+            // Compact: just company names, each row deep-links into Stock Centric.
+            <ul className="divide-y divide-neutral-200 border-y border-neutral-200">
+              {companies.map((c) => (
+                <li key={c.symbol}>
+                  <Link
+                    href={scHref(c.symbol)}
+                    title={`Open ${c.symbol} in Stock Centric`}
+                    className="flex items-baseline gap-2 py-1.5 text-neutral-900 hover:bg-neutral-50"
                   >
-                    {c.company_name}
-                  </a>
-                  <span className="shrink-0 border border-neutral-300 px-1.5 py-0.5 text-xs font-medium text-neutral-600">
-                    {c.symbol}
-                  </span>
-                  <span className="shrink-0 text-xs text-neutral-400">
-                    {c.matches} mention{c.matches === 1 ? "" : "s"}
-                  </span>
-                </div>
-                <div className="mt-0.5 text-sm text-neutral-400">
-                  {c.doc_type ? <span>{c.doc_type}</span> : null}
-                  {c.doc_type && c.date ? " · " : ""}
-                  {c.date ?? ""}
-                </div>
-                {c.snippet && <p className="mt-1 line-clamp-2 text-base text-neutral-600">{c.snippet}</p>}
-              </li>
-            ))}
-          </ul>
+                    <span className="font-medium">{c.company_name}</span>
+                    <span className="text-xs text-neutral-400">{c.symbol}</span>
+                    <span className="ml-auto shrink-0 text-neutral-400">
+                      <ScArrow />
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            // Full: the matched document context; name → screener, symbol → Stock Centric.
+            <ul className="divide-y divide-neutral-200 border-y border-neutral-200">
+              {companies.map((c) => (
+                <li key={c.symbol} className="py-3">
+                  <div className="flex items-baseline gap-2">
+                    <a
+                      href={c.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-lg font-medium leading-snug text-neutral-900 hover:underline"
+                    >
+                      {c.company_name}
+                    </a>
+                    <Link
+                      href={scHref(c.symbol)}
+                      title={`Open ${c.symbol} in Stock Centric`}
+                      className="shrink-0 border border-neutral-300 px-1.5 py-0.5 text-xs font-medium text-neutral-600 hover:border-neutral-500"
+                    >
+                      {c.symbol} <ScArrow />
+                    </Link>
+                    <span className="shrink-0 text-xs text-neutral-400">
+                      {c.matches} mention{c.matches === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 text-sm text-neutral-400">
+                    {c.doc_type ? <span>{c.doc_type}</span> : null}
+                    {c.doc_type && c.date ? " · " : ""}
+                    {c.date ?? ""}
+                  </div>
+                  {c.snippet && <p className="mt-1 line-clamp-2 text-base text-neutral-600">{c.snippet}</p>}
+                </li>
+              ))}
+            </ul>
+          )}
         </>
       )}
       </div>

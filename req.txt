@@ -1,0 +1,14 @@
+52 week high
+
+event date | symbol | company name |series | price | 52 week high | last 52 week high | high events | first event last event
+
+same for 52 week low
+
+same wiondow style fopr gainers and losers
+
+
+stock centri
+
+we do individual stock wise
+
+and we also show date wise lsit fo all stocks where insider trades have happened on the Daylynn(we can have a look back poeriod of alst n days)
