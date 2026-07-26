@@ -19,6 +19,7 @@ async function fetchPanels(panels: Panel[], n: number, top: number): Promise<Pan
 export default function ScreenSection({ screen }: { screen: ScreenConfig }) {
   const [n, setN] = useState(30);
   const [top, setTop] = useState(20);
+  const [open, setOpen] = useState(false); // collapsed by default; tables still load
   const allPanels = screen.panelGroups.flat();
 
   // keepPreviousData keeps the prior tables on screen (dimmed under the loading
@@ -64,55 +65,79 @@ export default function ScreenSection({ screen }: { screen: ScreenConfig }) {
 
   return (
     <section id={`screen-${screen.id}`} className="scroll-mt-8">
-      <h2 className="mb-1 border-b border-neutral-200 pb-2 text-xl font-semibold">
+      {/* Collapsible: ▶ rotates to ▼ on expand. Content below stays mounted while
+          collapsed (h-0), so its tables still fetch/populate in the background and
+          revealing is instant. */}
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 border-b border-neutral-200 pb-2 text-left text-xl font-semibold"
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          className={`shrink-0 text-neutral-500 transition-transform ${open ? "rotate-90" : ""}`}
+        >
+          <path d="m9 18 6-6-6-6" />
+        </svg>
         {screen.label}
-      </h2>
+      </button>
 
-      {(screen.usesN || screen.usesTop) && (
-        <div className="mb-3 mt-2 flex gap-4 text-base">
-          {screen.usesN && (
-            <div className="flex items-center gap-2">
-              <Label htmlFor={`n-days-${screen.id}`} className="text-base">N days</Label>
-              <Input
-                id={`n-days-${screen.id}`}
-                type="number"
-                min={1}
-                value={n}
-                onChange={(e) => setN(Math.max(1, Number(e.target.value) || 1))}
-                className="w-20 text-base"
-              />
-            </div>
-          )}
-          {screen.usesTop && (
-            <div className="flex items-center gap-2">
-              <Label htmlFor={`top-n-${screen.id}`} className="text-base">Top N</Label>
-              <Input
-                id={`top-n-${screen.id}`}
-                type="number"
-                min={1}
-                value={top}
-                onChange={(e) => setTop(Math.max(1, Number(e.target.value) || 1))}
-                className="w-20 text-base"
-              />
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="flex flex-col gap-4">
-        {screen.panelGroups.map((group, i) => (
-          <div
-            key={i}
-            className={group.length > 1 ? "grid grid-cols-1 gap-4 lg:grid-cols-2" : "flex flex-col gap-4"}
-          >
-            {group.map((p) => (
-              <div key={p.title}>
-                <h3 className="mb-1 text-base font-medium text-neutral-500">{p.title}</h3>
-                <DataTable rows={panelRows(p.title)} loading={isValidating} linkSymbol />
+      <div className={open ? "mt-3" : "h-0 overflow-hidden"}>
+        {(screen.usesN || screen.usesTop) && (
+          <div className="mb-3 flex gap-4 text-base">
+            {screen.usesN && (
+              <div className="flex items-center gap-2">
+                <Label htmlFor={`n-days-${screen.id}`} className="text-base">N days</Label>
+                <Input
+                  id={`n-days-${screen.id}`}
+                  type="number"
+                  min={1}
+                  value={n}
+                  onChange={(e) => setN(Math.max(1, Number(e.target.value) || 1))}
+                  className="w-20 text-base"
+                />
               </div>
-            ))}
+            )}
+            {screen.usesTop && (
+              <div className="flex items-center gap-2">
+                <Label htmlFor={`top-n-${screen.id}`} className="text-base">Top N</Label>
+                <Input
+                  id={`top-n-${screen.id}`}
+                  type="number"
+                  min={1}
+                  value={top}
+                  onChange={(e) => setTop(Math.max(1, Number(e.target.value) || 1))}
+                  className="w-20 text-base"
+                />
+              </div>
+            )}
           </div>
-        ))}
+        )}
+
+        <div className="flex flex-col gap-4">
+          {screen.panelGroups.map((group, i) => (
+            <div
+              key={i}
+              className={group.length > 1 ? "grid grid-cols-1 gap-4 lg:grid-cols-2" : "flex flex-col gap-4"}
+            >
+              {group.map((p) => (
+                <div key={p.title}>
+                  <h3 className="mb-1 text-base font-medium text-neutral-500">{p.title}</h3>
+                  <DataTable rows={panelRows(p.title)} loading={isValidating} linkSymbol />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
     </section>
   );
