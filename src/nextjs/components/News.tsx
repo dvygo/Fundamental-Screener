@@ -43,26 +43,27 @@ export default function News() {
     [articles, filter],
   );
 
-  const loadingToastId = useRef<string | number | null>(null);
+  const loadingShown = useRef(false);
   useEffect(() => {
     if (isValidating) {
-      loadingToastId.current = toast.loading("Fetching news…");
+      toast.loading("Fetching news…", { id: "news", duration: Infinity });
+      loadingShown.current = true;
       return;
     }
-    if (loadingToastId.current === null) return;
-    if (error) toast.dismiss(loadingToastId.current);
+    if (!loadingShown.current) return;
+    loadingShown.current = false;
+    if (error) toast.dismiss("news");
     else if (data) {
       const n = data.filter((a) => a.symbols.length > 0).length;
-      toast.success(`News — ${n} Indian-company article${n === 1 ? "" : "s"}`, { id: loadingToastId.current });
+      toast.success(`News — ${n} Indian-company article${n === 1 ? "" : "s"}`, { id: "news", duration: 1000 });
     }
-    loadingToastId.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isValidating]);
 
   // Full-height column: heading + subtitle + filter stay pinned at the top; only
   // the article feed below scrolls (h-[calc(100vh-2rem)] fills main minus its p-4).
   return (
-    <div className="flex h-[calc(100vh-2rem)] max-w-4xl flex-col">
+    <div className="flex h-full max-w-4xl flex-col">
       <h1 className="mb-1 shrink-0 text-2xl font-semibold">News</h1>
       <p className="mb-4 shrink-0 text-base text-neutral-500">
         LiveMint · Companies — today · Indian listed companies only, each headline tagged with the stock(s) it names.

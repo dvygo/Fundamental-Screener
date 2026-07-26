@@ -35,20 +35,28 @@ export default function ScreenSection({ screen }: { screen: ScreenConfig }) {
     },
   );
 
-  const loadingToastId = useRef<string | number | null>(null);
+  // A STABLE toast id per screen: a second effect run (Strict Mode, Fast Refresh)
+  // reuses the same toast instead of stacking a duplicate. loadingShown gates the
+  // success/dismiss so we only finish a toast we actually started.
+  const toastId = `mkt-${screen.id}`;
+  const loadingShown = useRef(false);
   useEffect(() => {
     if (isValidating) {
-      loadingToastId.current = toast.loading(`Fetching ${screen.label}…`);
+      // Infinity: the loading toast persists for the WHOLE fetch (synced to the
+      // table's own loading overlay), instead of auto-dismissing on a 1s timer.
+      toast.loading(`Fetching ${screen.label}…`, { id: toastId, duration: Infinity });
+      loadingShown.current = true;
       return;
     }
-    if (loadingToastId.current === null) return;
+    if (!loadingShown.current) return;
+    loadingShown.current = false;
     if (error) {
-      toast.dismiss(loadingToastId.current);
+      toast.dismiss(toastId);
     } else if (data) {
       const totalRows = data.reduce((sum, p) => sum + p.rows.length, 0);
-      toast.success(`${screen.label} — ${totalRows} rows`, { id: loadingToastId.current });
+      // Morph the same toast to success with the short auto-dismiss.
+      toast.success(`${screen.label} — ${totalRows} rows`, { id: toastId, duration: 1000 });
     }
-    loadingToastId.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isValidating]);
 
@@ -100,7 +108,7 @@ export default function ScreenSection({ screen }: { screen: ScreenConfig }) {
             {group.map((p) => (
               <div key={p.title}>
                 <h3 className="mb-1 text-base font-medium text-neutral-500">{p.title}</h3>
-                <DataTable rows={panelRows(p.title)} loading={isValidating} />
+                <DataTable rows={panelRows(p.title)} loading={isValidating} linkSymbol />
               </div>
             ))}
           </div>

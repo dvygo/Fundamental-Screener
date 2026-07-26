@@ -37,15 +37,36 @@ export default function StockCentric() {
     return () => clearTimeout(t);
   }, [query]);
 
+  // Deep link from the Markets tables (?symbol=XYZ): resolve it to a full match
+  // (for the name/ISIN label) and select it in place of the RELIANCE default.
+  useEffect(() => {
+    const sym = new URLSearchParams(window.location.search).get("symbol");
+    if (!sym) return;
+    const S = sym.toUpperCase();
+    let cancelled = false;
+    (async () => {
+      let chosen: CompanyMatch = { symbol: S, company_name: S, isin: "" };
+      try {
+        const matches = await searchCompanies(S, "ALL");
+        chosen = matches.find((m) => m.symbol.toUpperCase() === S) ?? matches[0] ?? chosen;
+      } catch {
+        /* keep the minimal fallback — drill-down/promoters only need the symbol */
+      }
+      if (cancelled) return;
+      setSelected(chosen);
+      setQuery(label(chosen));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const { data: seriesList } = useSWR("series", listSeries, { revalidateOnFocus: false });
 
   const { data: matches } = useSWR(
     debouncedQuery.length > 0 ? ["company-search", debouncedQuery, series] : null,
     () => searchCompanies(debouncedQuery, series),
   );
-
-  // reset the keyboard highlight to the top whenever the result set changes
-  useEffect(() => setHighlightIdx(0), [matches]);
 
   function pick(m: CompanyMatch) {
     setSelected(m);
@@ -94,22 +115,25 @@ export default function StockCentric() {
   const shareholdingLoading = shareholdingValidating || (!!shareholdingError && shareholdingRows === undefined);
   const promoterLoading = promoterValidating || (!!promoterError && promoterRows === undefined);
 
-  const fetchToastId = useRef<string | number | null>(null);
+  const loadingShown = useRef(false);
   const loading = insiderLoading || shareholdingLoading || promoterLoading;
   useEffect(() => {
     if (!selected) return;
     if (loading) {
-      fetchToastId.current = toast.loading(`Fetching ${selected.symbol}…`);
+      // Stable id "stock-centric": switching stocks reuses the one toast slot
+      // (no duplicates); Infinity keeps it up for the whole fetch.
+      toast.loading(`Fetching ${selected.symbol}…`, { id: "stock-centric", duration: Infinity });
+      loadingShown.current = true;
       return;
     }
-    if (fetchToastId.current === null) return;
+    if (!loadingShown.current) return;
+    loadingShown.current = false;
     if (insiderError || shareholdingError) {
-      toast.dismiss(fetchToastId.current);
+      toast.dismiss("stock-centric");
     } else {
       const total = (insiderRows?.length ?? 0) + (promoterRows?.length ?? 0);
-      toast.success(`${selected.symbol} — ${total} rows`, { id: fetchToastId.current });
+      toast.success(`${selected.symbol} — ${total} rows`, { id: "stock-centric", duration: 1000 });
     }
-    fetchToastId.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, selected]);
 
@@ -146,6 +170,7 @@ export default function StockCentric() {
             onChange={(e) => {
               setQuery(e.target.value);
               setShowResults(true);
+              setHighlightIdx(0); // fresh results → highlight the top suggestion
             }}
             onKeyDown={onSearchKeyDown}
             // Re-clicking after a search selects the whole text so the next

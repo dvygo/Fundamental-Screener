@@ -1,8 +1,16 @@
 "use client";
 
 import { useMemo } from "react";
+import Link from "next/link";
 import { AgGridReact } from "ag-grid-react";
-import { ModuleRegistry, AllCommunityModule, themeQuartz, type ColDef, type ValueFormatterParams } from "ag-grid-community";
+import {
+  ModuleRegistry,
+  AllCommunityModule,
+  themeQuartz,
+  type ColDef,
+  type ValueFormatterParams,
+  type ICellRendererParams,
+} from "ag-grid-community";
 import type { Row } from "@/lib/screens";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -80,7 +88,42 @@ const SPACER_COL: ColDef = {
   suppressHeaderMenuButton: true,
 };
 
-function buildColumns(rows: Row[]): ColDef[] {
+// Symbol cell with a small ↗ that opens the stock in Stock Centric. Rendered
+// only when the caller opts in (linkSymbol) — e.g. the Markets tables. The empty
+// trailing spacer row has no symbol, so it renders nothing.
+function SymbolCell(params: ICellRendererParams) {
+  const symbol = params.value;
+  if (typeof symbol !== "string" || !symbol) return null;
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span>{symbol}</span>
+      <Link
+        href={`/stock-centric?symbol=${encodeURIComponent(symbol)}`}
+        aria-label={`Open ${symbol} in Stock Centric`}
+        title={`Open ${symbol} in Stock Centric`}
+        className="text-neutral-400 transition-colors hover:text-neutral-900"
+      >
+        <svg
+          width="11"
+          height="11"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="inline align-[-1px]"
+          aria-hidden="true"
+        >
+          <path d="M7 17 17 7" />
+          <path d="M8 7h9v9" />
+        </svg>
+      </Link>
+    </span>
+  );
+}
+
+function buildColumns(rows: Row[], linkSymbol: boolean): ColDef[] {
   const cols = Object.keys(rows[0]).map((field) => {
     const sample = rows.find((r) => r[field] !== null && r[field] !== undefined)?.[field];
     const numeric = sample !== undefined && isNumericValue(sample);
@@ -110,6 +153,7 @@ function buildColumns(rows: Row[]): ColDef[] {
         return isDateValue(params.value) ? toDDMMYY(params.value) : String(params.value);
       };
     }
+    if (linkSymbol && field === "symbol") colDef.cellRenderer = SymbolCell;
     return colDef;
   });
   cols.push(SPACER_COL);
@@ -121,17 +165,23 @@ export default function DataTable({
   loading,
   fill = false,
   emptyMessage = "No rows",
+  linkSymbol = false,
 }: {
   rows: Row[];
   loading: boolean;
   fill?: boolean;
   emptyMessage?: string;
+  /** Render the `symbol` column with a ↗ link into Stock Centric. */
+  linkSymbol?: boolean;
 }) {
   // The grid shell (headers + fixed height) always renders, with the loading
   // overlay on top. Callers pass keepPreviousData SWR data, so `rows` stays
   // populated across param-change refetches - columns only go empty on the
   // very first load, where the overlay covers the empty box anyway.
-  const columnDefs = useMemo<ColDef[]>(() => (rows.length === 0 ? [] : buildColumns(rows)), [rows]);
+  const columnDefs = useMemo<ColDef[]>(
+    () => (rows.length === 0 ? [] : buildColumns(rows, linkSymbol)),
+    [rows, linkSymbol],
+  );
 
   // Append one empty row (paired with the __spacer column) so the always-visible
   // scrollbars overlap the blank row/column instead of real data.

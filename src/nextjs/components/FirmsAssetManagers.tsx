@@ -77,16 +77,18 @@ export default function FirmsAssetManagers() {
   // an empty list — otherwise a second search would silently show stale results.
   const searching = isValidating && !error;
 
+  // Full-height column: heading, subtitle, search box and the dropdowns stay
+  // pinned at the top; only the results list below scrolls.
   return (
-    <div className="max-w-4xl">
-      <h1 className="mb-1 text-2xl font-semibold">Firms &amp; Asset Managers</h1>
-      <p className="mb-4 text-base text-neutral-500">
+    <div className="flex h-full max-w-4xl flex-col">
+      <h1 className="mb-1 shrink-0 text-2xl font-semibold">Firms &amp; Asset Managers</h1>
+      <p className="mb-4 shrink-0 text-base text-neutral-500">
         Full-text search across screener.in filings, announcements &amp; concall transcripts — the companies that mention a
         firm or asset manager. Type your own term, or pick a fund manager from the rupeevest index.
       </p>
 
       {/* Free-text search — typing clears any dropdown selection. */}
-      <div className="mb-3 flex max-w-2xl items-center gap-2">
+      <div className="mb-3 flex max-w-2xl shrink-0 items-center gap-2">
         <Input
           aria-label="Search firm or asset manager"
           placeholder="e.g. Aequitas, Marcellus, Mukul Agrawal…"
@@ -109,7 +111,7 @@ export default function FirmsAssetManagers() {
 
       {/* Four SEBI-firm pick-lists + fund managers — mutually exclusive: picking
           one resets the others (value is bound to `pick.source`). */}
-      <div className="mb-6 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mb-6 grid shrink-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {FIRM_DROPDOWNS.map(({ type, label }) => (
           <select
             key={type}
@@ -146,6 +148,8 @@ export default function FirmsAssetManagers() {
         </select>
       </div>
 
+      {/* Only the results scroll; min-h-0 lets this box shrink in the flex column. */}
+      <div className="min-h-0 flex-1 overflow-auto">
       {!submitted ? (
         <p className="text-base text-neutral-400">Search a firm or asset manager to see the companies that mention it.</p>
       ) : error ? (
@@ -198,6 +202,7 @@ export default function FirmsAssetManagers() {
           </ul>
         </>
       )}
+      </div>
     </div>
   );
 }
