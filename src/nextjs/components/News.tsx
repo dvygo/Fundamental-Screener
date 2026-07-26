@@ -59,15 +59,17 @@ export default function News() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isValidating]);
 
+  // Full-height column: heading + subtitle + filter stay pinned at the top; only
+  // the article feed below scrolls (h-[calc(100vh-2rem)] fills main minus its p-4).
   return (
-    <div className="max-w-4xl">
-      <h1 className="mb-1 text-2xl font-semibold">News</h1>
-      <p className="mb-4 text-base text-neutral-500">
+    <div className="flex h-[calc(100vh-2rem)] max-w-4xl flex-col">
+      <h1 className="mb-1 shrink-0 text-2xl font-semibold">News</h1>
+      <p className="mb-4 shrink-0 text-base text-neutral-500">
         LiveMint · Companies — today · Indian listed companies only, each headline tagged with the stock(s) it names.
       </p>
 
       {/* Stock filter — default "All stocks" shows every article. */}
-      <div className="mb-5 flex flex-wrap items-center gap-2">
+      <div className="mb-4 flex shrink-0 flex-wrap items-center gap-2">
         <select
           aria-label="Filter by stock"
           value={filter}
@@ -94,6 +96,8 @@ export default function News() {
         </span>
       </div>
 
+      {/* Only this feed scrolls; min-h-0 lets it shrink inside the flex column. */}
+      <div className="min-h-0 flex-1 overflow-auto">
       {error && !data ? (
         <p className="text-base text-red-600">Couldn&apos;t load news. Retrying…</p>
       ) : shown.length === 0 ? (
@@ -147,6 +151,7 @@ export default function News() {
           ))}
         </ul>
       )}
+      </div>
     </div>
   );
 }

@@ -29,6 +29,7 @@ import {
 import { searchCompanies, companyInsider, companyShareholding, companyDrilldown, companyPromoters, listSeries } from './companies.js';
 import { corporateActions } from './corporate.js';
 import { getNews } from './news.js';
+import { listFundManagers, listFirms, firmSearch } from './firms.js';
 
 const PORT = process.env.PORT || 3000;
 const app = express();
@@ -104,6 +105,26 @@ app.get('/api/corporate-actions', route(() => corporateActions()));
 // Layer C — LiveMint "companies" news, each article tagged with the NSE
 // symbol(s) it names (see src/news.js). Default view shows every article.
 app.get('/api/news', route(() => getNews()));
+
+// Firms & Asset Managers — the rupeevest fund-manager pick-list, and a
+// screener.in full-text search that returns the companies mentioning a firm /
+// manager / free-text query (deduped). See src/firms.js.
+app.get('/api/fund-managers', route(() => listFundManagers()));
+
+// SEBI-registered firms (AMC/PMS/AIF/RIA) — the four dropdowns' pick-lists.
+app.get('/api/firms', route(() => listFirms()));
+
+app.get('/api/firm-search', route((req, res) => {
+  // A repeated ?q= makes Express hand back an array - coerce to one string, and
+  // cap length so a giant query can't be forwarded to screener.
+  const raw = req.query.q;
+  const q = (Array.isArray(raw) ? raw[0] : raw || '').toString().trim().slice(0, 200);
+  if (!q) {
+    res.status(400).json({ error: "query param 'q' is required" });
+    return null;
+  }
+  return firmSearch(q);
+}));
 
 app.get('/api/screens/upper-circuit', route(() => screen6a_upperCircuit()));
 

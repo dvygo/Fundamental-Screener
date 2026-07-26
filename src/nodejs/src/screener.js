@@ -13,6 +13,7 @@
 // fetches, cached HTML, degrade gracefully on block/rate-limit.
 
 import * as cheerio from 'cheerio';
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -386,4 +387,105 @@ export async function screenerInsider(symbol) {
   if (!dossier || !dossier.companyId) return null;
   const html = await fetchTrades(symbol, dossier.companyId);
   return html ? parseInsiderTrades(html) : null;
+}
+
+// ---- full-text search (login-gated "Firms & Asset Managers") ------------------
+// screener's full-text search hunts a phrase across filings, announcements and
+// concall transcripts, returning the documents (and their companies) that
+// mention it. Searching a firm/asset-manager name ("Aequitas", a fund manager
+// from the rupeevest index) surfaces the companies it's tied to. We take the
+// first page (top relevance), dedupe to one row per company, and report how many
+// documents each matched. Login-gated, so it goes through authedFetch; paced +
+// cached per query like everything else here.
+
+const ftsDir = path.join(RAW_DIR, 'fts');
+const ftsPath = (slug) => path.join(ftsDir, `${slug}.html`);
+// Filesystem-safe cache key for a free-text query. The readable prefix is lossy
+// (punctuation collapsed, truncated), so a query hash is appended to keep
+// distinct queries in distinct files - "A&B" and "A B" must not collide.
+const slugify = (q) => {
+  const norm = q.trim().toLowerCase();
+  const prefix = norm.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'q';
+  return `${prefix}-${crypto.createHash('sha1').update(norm).digest('hex').slice(0, 10)}`;
+};
+
+const ftsInFlight = new Map();
+
+async function fetchFullTextSearch(query) {
+  const slug = slugify(query);
+  try {
+    return await fs.readFile(ftsPath(slug), 'utf8');
+  } catch {
+    /* not cached - fetch live below */
+  }
+  // Share one live fetch across concurrent identical uncached searches.
+  if (ftsInFlight.has(slug)) return ftsInFlight.get(slug);
+  const run = (async () => {
+    const resp = await authedFetch(`${BASE}/full-text-search/?q=${encodeURIComponent(query)}`, { Referer: `${BASE}/` });
+    if (resp === null) throw new Error('screener login unavailable for full-text search'); // no creds -> surface it
+    if (resp.status === 404) return null;
+    if (!resp.ok) throw new Error(`screener full-text-search ${resp.status}`); // transient -> caller retries
+    const html = await resp.text();
+    // Every real results page - INCLUDING "0 results found" / "No results found"
+    // - carries the "results found" marker, so those are the only pages we cache
+    // and parse (zero-results parses to an empty list, which is a valid answer).
+    // A page WITHOUT the marker is never a legitimate empty result: it's the
+    // login/register page (auth) or a bot-block/interstitial (per
+    // context/sources.md). Both are retryable, so throw rather than caching junk
+    // or reporting a false "No companies".
+    if (!/results found/i.test(html)) {
+      if (/<title>\s*(Register|Login)/i.test(html)) throw new Error('screener full-text search not authenticated');
+      throw new Error('screener full-text search blocked or returned an unexpected page');
+    }
+    await fs.mkdir(ftsDir, { recursive: true });
+    await fs.writeFile(ftsPath(slug), html, 'utf8');
+    return html;
+  })().finally(() => ftsInFlight.delete(slug));
+  ftsInFlight.set(slug, run);
+  return run;
+}
+
+// One page of full-text results -> total document count + one row per company
+// (deduped), each with its match count and the most-recent matching document's
+// type/date/snippet (screener orders newest-first, so the first block wins).
+function parseFullTextSearch(html) {
+  const $ = cheerio.load(html);
+  let total = 0;
+  $('p.sub').each((_, e) => {
+    const m = $(e).text().match(/([\d,]+)\s+results found/);
+    if (m) total = parseInt(m[1].replace(/,/g, ''), 10);
+  });
+  const bySymbol = new Map();
+  $('div.margin-top-20.margin-bottom-36').each((_, el) => {
+    const block = $(el);
+    const link = block.find('a[href^="/company/"]').first();
+    const m = (link.attr('href') || '').match(/^\/company\/([^/]+)\//);
+    if (!m) return;
+    const symbol = m[1];
+    const name = link.find('.hover-link').text().replace(/\s+/g, ' ').trim() || symbol;
+    const docType = block.find('.font-size-17 a').first().text().replace(/\s+/g, ' ').trim() || null;
+    const dateM = block.find('.font-size-14').first().text().match(/\d{1,2}\s+\w{3,}\s+\d{4}/);
+    const snippet = block.find('.font-size-16').first().text().replace(/\s+/g, ' ').trim();
+    if (!bySymbol.has(symbol)) {
+      bySymbol.set(symbol, {
+        symbol,
+        company_name: name,
+        url: `${BASE}/company/${symbol}/`,
+        matches: 0,
+        doc_type: docType,
+        date: dateM ? dateM[0] : null,
+        snippet,
+      });
+    }
+    bySymbol.get(symbol).matches += 1;
+  });
+  return { total, companies: [...bySymbol.values()] };
+}
+
+export async function screenerFullTextSearch(query) {
+  const q = String(query || '').trim();
+  if (!q) return { query: '', total: 0, companies: [] };
+  const html = await fetchFullTextSearch(q);
+  if (!html) return { query: q, total: 0, companies: [] };
+  return { query: q, ...parseFullTextSearch(html) };
 }
