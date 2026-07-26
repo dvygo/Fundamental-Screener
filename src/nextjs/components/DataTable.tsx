@@ -147,7 +147,10 @@ function buildColumns(rows: Row[], linkSymbol: boolean): ColDef[] {
       colDef.valueFormatter = (params: ValueFormatterParams) => {
         if (params.value === null || params.value === undefined || params.value === "") return "";
         const n = toNumber(params.value);
-        return Number.isFinite(n) ? n.toFixed(2) : String(params.value);
+        if (!Number.isFinite(n)) return String(params.value);
+        // Whole numbers (scores, counts, event tallies) render clean; only
+        // genuinely fractional values (prices, %) keep two decimals.
+        return Number.isInteger(n) ? String(n) : n.toFixed(2);
       };
     } else if (date) {
       // Sort on the raw ISO value, not the displayed DD-MM-YY string - lexical

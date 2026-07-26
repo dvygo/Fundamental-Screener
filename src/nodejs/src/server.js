@@ -32,6 +32,7 @@ import {
 import { searchCompanies, companyInsider, companyShareholding, companyDrilldown, companyPromoters, listSeries, insiderRecent } from './companies.js';
 import { corporateActions } from './corporate.js';
 import { getNews } from './news.js';
+import { huntBoard } from './hunt.js';
 import { listFundManagers, listFirms, firmSearch } from './firms.js';
 
 const PORT = process.env.PORT || 3000;
@@ -123,6 +124,16 @@ app.get('/api/screens/losers/recurrence', route((req, res) => {
 }));
 
 app.get('/api/corporate-actions', route(() => corporateActions()));
+
+// HUNT — the convergence scoreboard (context/requirements/.../Idea Hunting
+// Framework.pdf). Ranks every stock by the flat-point signal score it accrued
+// over a rolling window of the last `sessions` trading sessions (framework
+// default 21 ≈ 1 month) across all the tripwires. See src/hunt.js.
+app.get('/api/hunt', route((req, res) => {
+  const sessions = intParam(req, res, 'sessions', 21);
+  if (sessions === null) return null;
+  return huntBoard(sessions);
+}));
 
 // Layer C — LiveMint "companies" news, each article tagged with the NSE
 // symbol(s) it names (see src/news.js). Default view shows every article.
