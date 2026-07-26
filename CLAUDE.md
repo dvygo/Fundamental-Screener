@@ -22,7 +22,12 @@ Read `context/sources.md` before touching scrapers.
 - `data/companies/` — parsed dossiers (committed)
 - `data/bod/` — **raw manual drops** (NSE/BSE bhavcopies, daily reports) — the pre-processing inbox (committed)
 - `data/backup/YYYYMMDD/` — mirror of every processed file also written to MinIO (committed; DR)
-- `data/raw/` — cached scrape HTML (gitignored; re-fetchable)
+- `data/raw/` — cached scrape HTML + downloaded index CSVs / XBRL cache (gitignored; re-fetchable)
+- `data/store/` — **consolidated single-file filing store** (gitignored; derived). Quarterly/event
+  filing data is NOT day-partitioned: `shareholding.parquet` (promoter/public % per symbol per
+  quarter, whole history, from the NSE shareholding index via `src/python/shareholding_load.py`) and
+  `insider.parquet` (lossless insider XBRL shred via `src/python/insider_load.py`). Daily *market*
+  data (bhavcopy, 52w, circuit, corp actions) stays day-partitioned under `data/extracts/`.
 
 Storage tiering (disk → MinIO, services read MinIO only): see `context/storage.md`.
 

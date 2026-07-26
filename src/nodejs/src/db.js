@@ -12,6 +12,10 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..', '..', '..');
 const EXTRACTS = path.join(ROOT, 'data', 'extracts').split(path.sep).join('/');
+// Consolidated single-file store (permanent shape for filing data — quarterly/
+// event filings were never a good fit for day partitioning). Built by
+// src/python/shareholding_load.py and src/python/insider_load.py.
+const STORE = path.join(ROOT, 'data', 'store').split(path.sep).join('/');
 
 // NSE month names are UPPERCASE ("23-JUL-2025"); strptime %b matches case-insensitively.
 const D = (col) => `try_strptime(${col}, '%d-%b-%Y')::date`;
@@ -26,11 +30,13 @@ async function createConnection() {
   const wk = `${EXTRACTS}/*/CM_52_wk_High_low*.csv`;
   const sec = `${EXTRACTS}/*/NSE_CM_security_*.csv`;
   const bh = `${EXTRACTS}/*/bh*.csv`;
-  const insiderParquet = `${EXTRACTS}/*/CF-Insider-Trading-*.parquet`;
-  const shareholdingParquet = `${EXTRACTS}/*/CF-Shareholding-Pattern-*.parquet`;
   const mcapCsv = `${EXTRACTS}/*/mcap*.csv`;
   const peCsv = `${EXTRACTS}/*/PE_*.csv`;
   const bc = `${EXTRACTS}/*/bc*.csv`;
+  // Filing facts now live in one consolidated file each (not a per-day glob).
+  const promoterStore = `${STORE}/shareholding.parquet`;
+  const insiderStore = `${STORE}/insider.parquet`;
+  const shareholdingFactsStore = `${STORE}/shareholding_facts.parquet`;
 
   await connection.run(`
     CREATE OR REPLACE VIEW prices AS
@@ -81,6 +87,25 @@ async function createConnection() {
     ) WHERE rn = 1
   `);
 
+  // Search-facing security master — the LATEST cm_security file only (its
+  // YYYYMMDD folder is the max across the extracts), one row per (symbol,
+  // series) with the exact NSE strings: TckrSymb, SctySrs, FinInstrmNm, ISIN.
+  // The Stock Centric search filters on this by series (default EQ), so the
+  // whole per-series universe is queryable, not a single deduped row per symbol.
+  await connection.run(`
+    CREATE OR REPLACE VIEW security_master AS
+    WITH raw AS (
+      SELECT trim(tckrsymb) AS symbol, trim(sctysrs) AS series,
+             trim(fininstrmnm) AS company_name, trim(isin) AS isin,
+             regexp_extract(filename, '/([0-9]{8})/', 1) AS file_date
+      FROM read_csv('${sec}', header=true, all_varchar=true, normalize_names=true,
+                    filename=true, union_by_name=true)
+    )
+    SELECT DISTINCT symbol, series, company_name, isin
+    FROM raw
+    WHERE file_date = (SELECT max(file_date) FROM raw) AND symbol <> ''
+  `);
+
   // upper/lower circuit hitters - real NSE data, not a heuristic: bh<date>.csv
   // ("securities which have hit their price bands during the day", per NSE's
   // own readme.txt shipped in the daily PR bundle). H = upper, L = lower.
@@ -95,16 +120,34 @@ async function createConnection() {
     WHERE trim(series) = 'EQ'
   `);
 
-  // Layer B (stock-centric) — lossless XBRL facts from xbrl_populate.py.
-  // Only populated for the dates that script has run against so far (currently
-  // 20260720-25), not the full filing history - see src/python/xbrl_populate.py.
+  // Layer B (stock-centric) — consolidated single-file stores, all history in
+  // one file each (no per-day gaps). Promoter/public % come straight from the
+  // shareholding filing index (src/python/shareholding_load.py); insider qty/
+  // value are the lossless XBRL shred (src/python/insider_load.py).
+
+  // Promoter holding per (symbol, quarter): the whole 2020->today series, so a
+  // symbol's history and its change are queryable regardless of which day it
+  // filed. symbol is resolved at load time (NULL where a name didn't map).
+  await connection.run(`
+    CREATE OR REPLACE VIEW promoter_history AS
+    SELECT symbol, company, as_on_date, promoter_pct, public_pct,
+           employee_trust_pct, status, submission_date
+    FROM read_parquet('${promoterStore}')
+    WHERE symbol IS NOT NULL
+  `);
+
+  // Insider trading — lossless facts (grows as the backfill runs; the file is
+  // checkpointed). Missing file => empty view so the API still boots.
   await connection.run(`
     CREATE OR REPLACE VIEW insider_facts AS
-    SELECT * FROM read_parquet('${insiderParquet}', union_by_name=true)
+    SELECT * FROM read_parquet('${insiderStore}', union_by_name=true)
   `);
+  // Shareholding XBRL facts — only still used by the NSE FII/DII drill-down
+  // fallback (screener.in is the primary source). Consolidated from the days
+  // xbrl_populate.py had run against.
   await connection.run(`
     CREATE OR REPLACE VIEW shareholding_facts AS
-    SELECT * FROM read_parquet('${shareholdingParquet}', union_by_name=true)
+    SELECT * FROM read_parquet('${shareholdingFactsStore}', union_by_name=true)
   `);
 
   // B4 drill-down daily metrics: latest market cap (mcap<date>.csv) and P/E

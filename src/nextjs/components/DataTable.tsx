@@ -48,8 +48,13 @@ const theme = themeQuartz.withParams({
   cellHorizontalPadding: 8,
 });
 
-// header 30 + 10 rows * 26 + horizontal scrollbar 16 = exactly ten rows visible.
-const TEN_ROWS_PX = 30 + 10 * 26 + 16;
+// header 30 + rows*26 + horizontal scrollbar 16. Show 10 data rows PLUS one
+// buffer row so the always-visible horizontal scrollbar doesn't clip the last
+// row (the trailing spacer column does the same for the vertical scrollbar).
+const HEADER_PX = 30;
+const ROW_PX = 26;
+const SCROLLBAR_PX = 16;
+const TABLE_PX = HEADER_PX + 11 * ROW_PX + SCROLLBAR_PX;
 
 const LOADING_OVERLAY = `
   <div class="fs-overlay">
@@ -57,10 +62,26 @@ const LOADING_OVERLAY = `
     <div class="fs-overlay-text">Loading…</div>
   </div>
 `;
-const NO_ROWS_OVERLAY = `<div class="fs-overlay-text">No rows</div>`;
+const noRowsOverlay = (msg: string) => `<div class="fs-overlay-text">${msg}</div>`;
+
+// A blank, unmovable trailing column so the always-visible vertical scrollbar
+// overlaps empty space instead of the last real column's values.
+const SPACER_COL: ColDef = {
+  colId: "__spacer",
+  headerName: "",
+  valueGetter: () => "",
+  width: 22,
+  minWidth: 22,
+  maxWidth: 22,
+  resizable: false,
+  sortable: false,
+  filter: false,
+  suppressAutoSize: true,
+  suppressHeaderMenuButton: true,
+};
 
 function buildColumns(rows: Row[]): ColDef[] {
-  return Object.keys(rows[0]).map((field) => {
+  const cols = Object.keys(rows[0]).map((field) => {
     const sample = rows.find((r) => r[field] !== null && r[field] !== undefined)?.[field];
     const numeric = sample !== undefined && isNumericValue(sample);
     const date = !numeric && sample !== undefined && isDateValue(sample);
@@ -91,20 +112,39 @@ function buildColumns(rows: Row[]): ColDef[] {
     }
     return colDef;
   });
+  cols.push(SPACER_COL);
+  return cols;
 }
 
-export default function DataTable({ rows, loading }: { rows: Row[]; loading: boolean }) {
+export default function DataTable({
+  rows,
+  loading,
+  fill = false,
+  emptyMessage = "No rows",
+}: {
+  rows: Row[];
+  loading: boolean;
+  fill?: boolean;
+  emptyMessage?: string;
+}) {
   // The grid shell (headers + fixed height) always renders, with the loading
   // overlay on top. Callers pass keepPreviousData SWR data, so `rows` stays
   // populated across param-change refetches - columns only go empty on the
   // very first load, where the overlay covers the empty box anyway.
   const columnDefs = useMemo<ColDef[]>(() => (rows.length === 0 ? [] : buildColumns(rows)), [rows]);
 
+  // Append one empty row (paired with the __spacer column) so the always-visible
+  // scrollbars overlap the blank row/column instead of real data.
+  const rowData = useMemo<Row[]>(() => (rows.length === 0 ? rows : [...rows, {}]), [rows]);
+
+  // Default: exactly ten rows tall, internal scroll. `fill` instead grows to
+  // consume the parent flex column's remaining height (full-page tables) -
+  // min-h-0 lets the grid shrink so its own body scrolls rather than the page.
   return (
-    <div style={{ height: TEN_ROWS_PX }} className="w-full">
+    <div style={fill ? undefined : { height: TABLE_PX }} className={fill ? "w-full min-h-0 flex-1" : "w-full"}>
       <AgGridReact
         theme={theme}
-        rowData={rows}
+        rowData={rowData}
         columnDefs={columnDefs}
         defaultColDef={{ sortable: true, filter: true, resizable: true }}
         autoSizeStrategy={{ type: "fitCellContents", defaultMaxWidth: 400 }}
@@ -113,7 +153,7 @@ export default function DataTable({ rows, loading }: { rows: Row[]; loading: boo
         animateRows
         loading={loading}
         overlayLoadingTemplate={LOADING_OVERLAY}
-        overlayNoRowsTemplate={NO_ROWS_OVERLAY}
+        overlayNoRowsTemplate={noRowsOverlay(emptyMessage)}
       />
     </div>
   );

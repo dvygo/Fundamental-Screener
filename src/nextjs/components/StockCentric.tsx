@@ -1,49 +1,101 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import useSWR from "swr";
+import useSWR, { type SWRConfiguration } from "swr";
 import { toast } from "sonner";
 import DataTable from "@/components/DataTable";
 import StockDrilldown from "@/components/StockDrilldown";
 import { Input } from "@/components/ui/input";
-import { searchCompanies, companyInsider, companyShareholding, type CompanyMatch } from "@/lib/companies";
+import { searchCompanies, companyInsider, companyShareholding, companyPromoters, listSeries, type CompanyMatch } from "@/lib/companies";
+
+// On-demand screener fetches can fail transiently. Between screener.in and our
+// own data the answer is always obtainable, so keep retrying every 1000ms
+// (the widget/table shows loading until it arrives) instead of surfacing an error.
+const ONDEMAND: SWRConfiguration = {
+  revalidateOnFocus: false,
+  shouldRetryOnError: true,
+  errorRetryCount: 120,
+  onErrorRetry: (_err, _key, _cfg, revalidate, { retryCount }) => {
+    setTimeout(() => revalidate({ retryCount }), 1000);
+  },
+};
+
+// Shown by default on first load so the page isn't empty.
+const DEFAULT_STOCK: CompanyMatch = { symbol: "RELIANCE", company_name: "RELIANCE INDUSTRIES LTD", isin: "INE002A01018" };
+const label = (m: CompanyMatch) => `${m.symbol} (${m.company_name}) (${m.isin})`;
 
 export default function StockCentric() {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(label(DEFAULT_STOCK));
   const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [selected, setSelected] = useState<CompanyMatch | null>(null);
+  const [series, setSeries] = useState("EQ");
+  const [selected, setSelected] = useState<CompanyMatch | null>(DEFAULT_STOCK);
   const [showResults, setShowResults] = useState(false);
+  const [highlightIdx, setHighlightIdx] = useState(0);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query.trim()), 250);
     return () => clearTimeout(t);
   }, [query]);
 
+  const { data: seriesList } = useSWR("series", listSeries, { revalidateOnFocus: false });
+
   const { data: matches } = useSWR(
-    debouncedQuery.length > 0 ? ["company-search", debouncedQuery] : null,
-    () => searchCompanies(debouncedQuery),
+    debouncedQuery.length > 0 ? ["company-search", debouncedQuery, series] : null,
+    () => searchCompanies(debouncedQuery, series),
   );
+
+  // reset the keyboard highlight to the top whenever the result set changes
+  useEffect(() => setHighlightIdx(0), [matches]);
+
+  function pick(m: CompanyMatch) {
+    setSelected(m);
+    setQuery(label(m));
+    setShowResults(false);
+  }
+
+  // ↑/↓ move through suggestions, Enter selects, Esc closes.
+  function onSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Escape") return setShowResults(false);
+    if (!showResults || !matches || matches.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightIdx((i) => Math.min(i + 1, matches.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightIdx((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const m = matches[highlightIdx];
+      if (m) pick(m);
+    }
+  }
 
   const {
     data: insiderRows,
     error: insiderError,
-    isValidating: insiderLoading,
-  } = useSWR(selected ? ["insider", selected.symbol] : null, () => companyInsider(selected!.symbol), {
-    keepPreviousData: true,
-    revalidateOnFocus: false,
-  });
+    isValidating: insiderValidating,
+  } = useSWR(selected ? ["insider", selected.symbol] : null, () => companyInsider(selected!.symbol), ONDEMAND);
 
   const {
     data: shareholdingRows,
     error: shareholdingError,
-    isValidating: shareholdingLoading,
-  } = useSWR(selected ? ["shareholding", selected.symbol] : null, () => companyShareholding(selected!.symbol), {
-    keepPreviousData: true,
-    revalidateOnFocus: false,
-  });
+    isValidating: shareholdingValidating,
+  } = useSWR(selected ? ["shareholding", selected.symbol] : null, () => companyShareholding(selected!.symbol), ONDEMAND);
+
+  const {
+    data: promoterRows,
+    error: promoterError,
+    isValidating: promoterValidating,
+  } = useSWR(selected ? ["promoters", selected.symbol] : null, () => companyPromoters(selected!.symbol), ONDEMAND);
+
+  // Loading = actively fetching, OR errored while still without data (a retry is
+  // pending) — so the overlay stays up across the 1000ms retry gaps until data lands.
+  const insiderLoading = insiderValidating || (!!insiderError && insiderRows === undefined);
+  const shareholdingLoading = shareholdingValidating || (!!shareholdingError && shareholdingRows === undefined);
+  const promoterLoading = promoterValidating || (!!promoterError && promoterRows === undefined);
 
   const fetchToastId = useRef<string | number | null>(null);
-  const loading = insiderLoading || shareholdingLoading;
+  const loading = insiderLoading || shareholdingLoading || promoterLoading;
   useEffect(() => {
     if (!selected) return;
     if (loading) {
@@ -54,7 +106,7 @@ export default function StockCentric() {
     if (insiderError || shareholdingError) {
       toast.dismiss(fetchToastId.current);
     } else {
-      const total = (insiderRows?.length ?? 0) + (shareholdingRows?.length ?? 0);
+      const total = (insiderRows?.length ?? 0) + (promoterRows?.length ?? 0);
       toast.success(`${selected.symbol} — ${total} rows`, { id: fetchToastId.current });
     }
     fetchToastId.current = null;
@@ -72,35 +124,61 @@ export default function StockCentric() {
     <>
       <h1 className="mb-4 text-2xl font-semibold">Stock Centric</h1>
 
-      <div className="relative mb-6 mt-3 max-w-sm">
-        <Input
-          placeholder="Search symbol or company name…"
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setShowResults(true);
-          }}
-          onFocus={() => setShowResults(true)}
-        />
-        {showResults && matches && matches.length > 0 && (
-          <ul className="absolute z-10 mt-1 w-full border border-neutral-200 bg-white shadow-sm">
-            {matches.map((m) => (
-              <li key={m.symbol}>
-                <button
-                  className="block w-full px-3 py-2 text-left text-base hover:bg-neutral-100"
-                  onClick={() => {
-                    setSelected(m);
-                    setQuery(`${m.symbol} — ${m.company_name}`);
-                    setShowResults(false);
-                  }}
+      <div className="mb-6 mt-3 flex max-w-xl items-center gap-2">
+        {/* Series filter — defaults to EQ; "All series" drops the filter. */}
+        <select
+          aria-label="Series"
+          value={series}
+          onChange={(e) => setSeries(e.target.value)}
+          className="h-9 shrink-0 border border-neutral-300 bg-white px-2 text-base font-medium focus:outline-none focus:ring-1 focus:ring-neutral-400"
+        >
+          <option value="ALL">All series</option>
+          {(seriesList ?? []).map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+        <div className="relative flex-1">
+          <Input
+            placeholder="Search symbol or company name…"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setShowResults(true);
+            }}
+            onKeyDown={onSearchKeyDown}
+            // Re-clicking after a search selects the whole text so the next
+            // keystroke replaces the previous stock instead of appending.
+            onFocus={(e) => {
+              setShowResults(true);
+              if (selected) e.currentTarget.select();
+            }}
+          />
+          {showResults && matches && matches.length > 0 && (
+            <ul className="absolute z-10 mt-1 max-h-72 w-full overflow-auto border border-neutral-200 bg-white shadow-sm">
+              {matches.map((m, i) => (
+                <li
+                  key={`${m.symbol}-${m.isin}`}
+                  ref={i === highlightIdx ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined}
                 >
-                  <span className="font-medium">{m.symbol}</span>{" "}
-                  <span className="text-neutral-500">{m.company_name}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+                  <button
+                    className={`block w-full truncate px-3 py-2 text-left text-base ${
+                      i === highlightIdx ? "bg-neutral-100" : ""
+                    }`}
+                    onMouseEnter={() => setHighlightIdx(i)}
+                    onClick={() => pick(m)}
+                  >
+                    <span className="font-medium">{m.symbol}</span>{" "}
+                    <span className="text-neutral-500">
+                      ({m.company_name}) ({m.isin})
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
 
       {!selected && <p className="text-base text-neutral-400">Search for a stock to see its details.</p>}
@@ -111,7 +189,7 @@ export default function StockCentric() {
 
           <div>
             <h3 className="mb-2 text-base font-medium text-neutral-500">
-              Promoter holding {current ? `— ${current.promoter_pct}%` : ""}
+              Promoters {current ? `— ${current.promoter_pct}% total` : ""}
               {change !== null && (
                 <span className={change >= 0 ? "text-emerald-600" : "text-red-600"}>
                   {" "}
@@ -120,7 +198,15 @@ export default function StockCentric() {
                 </span>
               )}
             </h3>
-            <DataTable rows={shareholdingRows ?? []} loading={shareholdingLoading} />
+            <DataTable
+              rows={promoterRows ?? []}
+              loading={promoterLoading}
+              emptyMessage={
+                current && current.promoter_pct === 0
+                  ? "No promoters — the company is fully public"
+                  : "No promoter data"
+              }
+            />
           </div>
 
           <div>

@@ -129,14 +129,35 @@
   }
 }
 
-/* AG Grid detects macOS/Chromium overlay scrollbars (0px native width) and
-   applies its own auto-hide "apple-style" scrollbar (opacity 0 until hover/
-   scroll) regardless of alwaysShowHorizontalScroll - that grid option only
-   reserves layout space, not opacity. Force it permanently visible instead. */
+/* AG Grid scrollbars. On overlay-scrollbar OSes (macOS/Chromium) the horizontal
+   strip's native bar is 0-height and auto-hidden. Per AG Grid's theming docs we
+   must NOT touch `overflow`/`position` (intrinsic to grid scrolling) — but
+   styling the scrollbar *elements* is supported: defining a custom
+   `::-webkit-scrollbar` makes Chromium/Safari render a classic, always-visible
+   (non-overlay) bar whenever the viewport overflows. We also unhide AG's own
+   auto-fading "apple-scrollbar" container so it can't dim the bar back out.
+   Ref: ag-grid.com/react-data-grid/theming-css (scrollbars section). */
 .ag-body-horizontal-scroll.ag-scrollbar-invisible.ag-apple-scrollbar,
 .ag-body-vertical-scroll.ag-scrollbar-invisible.ag-apple-scrollbar {
   opacity: 1 !important;
   visibility: visible !important;
+}
+.ag-body-horizontal-scroll-viewport::-webkit-scrollbar {
+  -webkit-appearance: none;
+  height: 11px;
+}
+.ag-body-vertical-scroll-viewport::-webkit-scrollbar {
+  -webkit-appearance: none;
+  width: 11px;
+}
+.ag-body-horizontal-scroll-viewport::-webkit-scrollbar-thumb,
+.ag-body-vertical-scroll-viewport::-webkit-scrollbar-thumb {
+  background: rgba(23, 23, 23, 0.42);
+  border: 2px solid #fff;
+}
+.ag-body-horizontal-scroll-viewport::-webkit-scrollbar-track,
+.ag-body-vertical-scroll-viewport::-webkit-scrollbar-track {
+  background: #f5f5f5;
 }
 
 /* Per-table loading overlay: a translucent backdrop (so any previously loaded

@@ -40,9 +40,9 @@ function changeColor(v: number | null): string {
 
 function Tile({ label, value, className = "" }: { label: string; value: string; className?: string }) {
   return (
-    <div className="border border-neutral-200 px-4 py-3">
-      <div className="text-sm text-neutral-500">{label}</div>
-      <div className={`mt-1 text-2xl ${className}`}>{value}</div>
+    <div className="border border-neutral-200 px-2.5 py-1">
+      <div className="text-xs leading-tight text-neutral-500">{label}</div>
+      <div className={`text-lg font-medium leading-tight ${className}`}>{value}</div>
     </div>
   );
 }
@@ -58,12 +58,12 @@ export default function StockDrilldown({ symbol }: { symbol: string }) {
 
   return (
     <div>
-      <h3 className="mb-2 text-base font-medium text-neutral-500">
+      <h3 className="mb-1.5 text-base font-medium text-neutral-500">
         Stock Ratios
         {loadingFirst && " — loading…"}
         {data?.source === "nse" && " (NSE fallback — no screener page)"}
       </h3>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-2 gap-0.5 sm:grid-cols-3 lg:grid-cols-4">
         <Tile label="Market Cap" value={fmtMktCap(d.market_cap ?? null)} />
         <Tile label="Current Price" value={fmtMoney(d.current_price ?? null)} />
         <Tile label="High / Low" value={fmtHighLow(d.high ?? null, d.low ?? null)} />

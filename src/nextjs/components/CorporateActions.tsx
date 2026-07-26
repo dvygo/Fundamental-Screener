@@ -29,13 +29,15 @@ export default function CorporateActions() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isValidating]);
 
+  // Full-page table: fill main's content box (viewport height minus its p-4),
+  // header + blurb take their natural height, the grid grabs the rest.
   return (
-    <>
+    <div className="flex h-[calc(100vh-2rem)] flex-col">
       <h1 className="mb-4 text-2xl font-semibold">Corporate Actions</h1>
       <p className="mb-3 text-base text-neutral-500">
         Dividends, splits, bonus, buybacks &amp; more — EQ series, with ex-date and record date.
       </p>
-      <DataTable rows={data ?? []} loading={isValidating} />
-    </>
+      <DataTable rows={data ?? []} loading={isValidating} fill />
+    </div>
   );
 }

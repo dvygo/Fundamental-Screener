@@ -3,28 +3,66 @@
 // Only covers the dates that script has been run against so far - see db.js.
 
 import { queryJson } from './db.js';
-import { screenerDrilldown } from './screener.js';
+import { screenerDrilldown, screenerPromoters, screenerInsider } from './screener.js';
 
-export function searchCompanies(q) {
+// Distinct series codes present in the latest security master (EQ, BE, BL, SM…),
+// alphabetical — feeds the Stock Centric series dropdown.
+export async function listSeries() {
+  // Letter-leading codes first (EQ, BE, SM, ST… — the equity/SME series), then
+  // the numeric NCD/bond codes, alphabetical within each group. Keeps the
+  // common equity series near the top of a long list.
+  const rows = await queryJson(
+    `SELECT DISTINCT series FROM security_master WHERE series <> ''
+     ORDER BY regexp_matches(series, '^[A-Za-z]') DESC, series`,
+  );
+  return rows.map((r) => r.series);
+}
+
+// Symbol/name typeahead over the latest security master, scoped to one series
+// (default 'EQ'; the sentinel 'ALL' drops the series filter). Returns the exact
+// NSE strings the UI shows as "TckrSymb (FinInstrmNm) (ISIN)". Prefix matches on
+// the ticker rank first. DISTINCT collapses the rare dup rows before ranking.
+export function searchCompanies(q, series = 'EQ') {
   const like = `%${q}%`;
   const prefix = `${q}%`;
   return queryJson(
     `
-    SELECT symbol, company_name
-    FROM security
-    WHERE symbol ILIKE ? OR company_name ILIKE ?
+    SELECT symbol, company_name, isin FROM (
+      SELECT DISTINCT symbol, company_name, isin
+      FROM security_master
+      WHERE (symbol ILIKE ? OR company_name ILIKE ?)
+        AND (? = 'ALL' OR series = ?)
+    )
     ORDER BY (symbol ILIKE ?) DESC, symbol
     LIMIT 20
   `,
-    [like, like, prefix],
+    [like, like, series, series, prefix],
   );
 }
 
-// B1 - insider buying/selling: qty + value per disclosed transaction.
+// B1 - insider buying + trades. Primary source is screener.in's login-gated
+// "Insider Trades" tab, scraped ON DEMAND when a symbol is opened in Stock
+// Centric (person, category, signed qty = buy/sell, avg price, value in lacs).
+// Falls back to our own NSE PIT filings (companyInsiderOwn) when screener has no
+// page / login is unavailable - that lossless store is the intended v2 source.
+export async function companyInsider(symbol) {
+  // screener primary; a transient screener failure falls back to our own NSE
+  // PIT filings (always available) instead of erroring.
+  try {
+    const screener = await screenerInsider(symbol);
+    if (screener && screener.length) return screener;
+  } catch {
+    /* fall through to own data */
+  }
+  return companyInsiderOwn(symbol);
+}
+
+// v2 source: our own lossless NSE PIT XBRL (data/store/insider.parquet). Kept as
+// the fallback until we shift fully off screener.
 // Each filing's MainI context carries the filing-level facts (symbol, date);
 // each person/transaction sits in its own "DisclosureN" context within the
 // same filing.
-export function companyInsider(symbol) {
+export function companyInsiderOwn(symbol) {
   return queryJson(
     `
     WITH main AS (
@@ -71,9 +109,15 @@ const DII_DIM = '{"in-bse-shp:CategoryOfShareholdersAxis": "in-bse-shp:Instituti
 // holding, 3yr promoter change). Falls back to the NSE-daily + XBRL metrics
 // below only when a symbol has no screener page (or the scrape is blocked).
 export async function companyDrilldown(symbol) {
-  const screener = await screenerDrilldown(symbol);
-  if (screener) return screener;
-
+  // screener is primary; a transient screener failure falls back to our own
+  // NSE-daily + XBRL metrics rather than erroring (drilldown data is always
+  // available from one source or the other).
+  try {
+    const screener = await screenerDrilldown(symbol);
+    if (screener) return screener;
+  } catch {
+    /* fall through to NSE own-data */
+  }
   const nse = await nseDrilldown(symbol);
   return nse ? { ...nse, high: null, low: null, promoter_change_3yr: null, public_pct: null, source: 'nse' } : null;
 }
@@ -143,33 +187,26 @@ async function nseDrilldown(symbol) {
   return rows[0] ?? null;
 }
 
-// B2 - promoter holding % (ShareholdingOfPromoterAndPromoterGroup category)
-// per filing, most recent first. "Change" is left to the caller to diff
-// consecutive rows - with only a few days of XBRL populated so far, most
-// symbols will have 0-1 rows here (no history yet to diff against).
+// B2 (names) - the promoter roster behind the aggregate %: each promoter entity
+// with its holding per quarter, scraped on demand from screener.in (the
+// individual names aren't in the NSE index CSV, only the aggregate). Null when
+// the symbol has no screener page.
+export function companyPromoters(symbol) {
+  return screenerPromoters(symbol);
+}
+
+// B2 - promoter holding % per quarter, whole history, most recent first. Comes
+// straight from the shareholding filing index (promoter_history store), so every
+// quarter a symbol filed is present - the caller diffs consecutive rows for the
+// quarter-over-quarter change. as_on_date is the quarter end (ISO, so it sorts
+// chronologically and the UI renders it DD-MM-YY).
 export function companyShareholding(symbol) {
   return queryJson(
     `
-    WITH meta AS (
-      SELECT xbrl_url,
-             max(CASE WHEN tag = 'Symbol' THEN value END) AS symbol,
-             max(CASE WHEN tag = 'NameOfTheCompany' THEN value END) AS company,
-             max(CASE WHEN tag = 'DateOfReport' THEN value END) AS report_date
-      FROM shareholding_facts
-      WHERE context_ref IN ('MainD', 'MainI')
-      GROUP BY xbrl_url
-    ),
-    promoter AS (
-      SELECT xbrl_url, TRY_CAST(value AS DOUBLE) AS promoter_frac
-      FROM shareholding_facts
-      WHERE tag = 'ShareholdingAsAPercentageOfTotalNumberOfShares'
-        AND dims = '{"in-bse-shp:CategoryOfShareholdersAxis": "in-bse-shp:ShareholdingOfPromoterAndPromoterGroupMember"}'
-    )
-    SELECT m.company, m.report_date, round(p.promoter_frac * 100, 2) AS promoter_pct
-    FROM meta m
-    JOIN promoter p USING (xbrl_url)
-    WHERE m.symbol = ?
-    ORDER BY m.report_date DESC
+    SELECT as_on_date, promoter_pct, public_pct, employee_trust_pct, status
+    FROM promoter_history
+    WHERE symbol = ?
+    ORDER BY as_on_date DESC
   `,
     [symbol],
   );

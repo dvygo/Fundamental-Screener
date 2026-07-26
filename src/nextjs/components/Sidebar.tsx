@@ -9,6 +9,7 @@ const NAV = [
   { href: "/", label: "Markets" },
   { href: "/stock-centric", label: "Stock Centric" },
   { href: "/corporate-actions", label: "Corporate Actions" },
+  { href: "/news", label: "News" },
 ];
 
 export default function Sidebar() {

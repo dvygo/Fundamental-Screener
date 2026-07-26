@@ -1,0 +1,191 @@
+// Layer C (news) — the LiveMint "companies" RSS feed, cached to data/raw as
+// today.xml and re-parsed. Each article is tagged with the NSE symbol(s) it
+// mentions by matching the headline against the security master (brand phrases),
+// so the Stock Centric universe and the news feed share one identity.
+//
+// Node does the scraping (screener + now RSS); Python stays on static-file
+// extraction. The feed is one small request, so no pacing gate is needed — but
+// we still cache to disk and re-parse from cache within the same day.
+
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import process from 'node:process';
+import * as cheerio from 'cheerio';
+import { queryJson } from './db.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(__dirname, '..', '..', '..');
+const CACHE_DIR = path.join(ROOT, 'data', 'raw', 'livemint');
+const CACHE_FILE = path.join(CACHE_DIR, 'today.xml');
+
+// LiveMint's "companies" feed — the same page as livemint.com/companies. Real,
+// documented RSS (livemint.com/rss); never a fabricated URL.
+const FEED_URL = 'https://www.livemint.com/rss/companies';
+const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36';
+
+// ---- stock tagging -------------------------------------------------------
+
+// Generic business words — never a brand on their own (used to build the
+// discriminating 2-token brand phrase and to reject weak solo tokens).
+const GENERIC = new Set(['LIMITED','LTD','PVT','PRIVATE','CORPORATION','CORP','COMPANY','CO','INDIA','INDIAN',
+  'THE','AND','OF','GROUP','HOLDINGS','HOLDING','ENTERPRISES','ENTERPRISE','INDUSTRIES','INDUSTRY','INDUSTRIAL',
+  'PROJECTS','PRODUCTS','SERVICES','SERVICE','SYSTEMS','SYSTEM','TECHNOLOGIES','TECHNOLOGY','INFRASTRUCTURE',
+  'INFRA','FINANCE','FINANCIAL','INVESTMENTS','INVESTMENT','INTERNATIONAL','GLOBAL','VENTURES','MILLS',
+  'LABORATORIES','LABS','PHARMA','PHARMACEUTICALS','CHEMICALS','ENGINEERING','CAPITAL','SOLUTIONS','RESOURCES']);
+// Tokens too generic/ambiguous to trust as a solo (single-word) brand: places,
+// months, common surnames, common English/biz words, and a few global-brand
+// collisions (Apple, Paramount…) that map to unrelated small Indian listings.
+const PLACES = ['ANDHRA','GUJARAT','KERALA','PUNJAB','BENGAL','SOUTH','NORTH','EAST','WEST','EASTERN','WESTERN',
+  'CENTRAL','BOMBAY','MADRAS','DELHI','MUMBAI','MYSORE','BANGALORE'];
+const MONTHS = ['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE','JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER'];
+const SURNAMES = ['SHARMA','KUMAR','SINGH','PATEL','SHAH','GUPTA','MEHTA','VERMA','RAO','REDDY','NAIR','IYER',
+  'KHAN','JAIN','AGARWAL','MODI','ROY','BOSE'];
+const COMMON = ['ORIENT','ORIENTAL','NATIONAL','STATE','UNITED','MODERN','STANDARD','PREMIER','UNIVERSAL','GENERAL',
+  'FUTURE','APPLE','PARAMOUNT','ENGINEERS','POWER','ENERGY','STEEL','CEMENT','BANK','HEALTH','MOTORS','PAPER',
+  'SUGAR','TEXTILES','METALS','METAL','MINING','AUTO','FOODS','SECURITIES','ELECTRONICS','ELECTRONIC','DIGITAL',
+  'SMART','METRO','INDIGO','MANIPAL','PRIME','ROYAL','SUPER','STAR','SUPREME','NEW','INDO'];
+const STOP = new Set([...GENERIC, ...PLACES, ...MONTHS, ...SURNAMES, ...COMMON]);
+
+const clean = (s) => s.toUpperCase().replace(/[^A-Z0-9& ]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+// full2 = first two tokens (a specific phrase, low false-positive: "TATA
+// CONSUMER", "HINDUSTAN ZINC", "ADANI ENERGY"); solo = the first token, kept
+// only when it's distinctive enough (>=4 chars, not a stopword).
+function aliasesOf(name) {
+  const t = clean(name).split(' ').filter(Boolean);
+  if (!t.length) return { full2: null, solo: null };
+  return {
+    full2: t.length >= 2 ? `${t[0]} ${t[1]}` : null,
+    solo: t[0].length >= 4 && !STOP.has(t[0]) ? t[0] : null,
+  };
+}
+
+let brandIndexPromise = null;
+// brand phrase -> Map(symbol -> {symbol, company_name}). Built once per process
+// from the EQ security master (clean tradable symbols only — no suspended '$'
+// or rights '-RE' tickers). Ambiguous keys are dropped so a headline only tags
+// a stock when the match is confident.
+function loadBrandIndex() {
+  if (!brandIndexPromise) {
+    brandIndexPromise = (async () => {
+      const rows = await queryJson(
+        `SELECT symbol, company_name FROM security_master
+         WHERE series = 'EQ' AND company_name <> ''
+           AND regexp_matches(symbol, '^[A-Z0-9]+$') AND NOT regexp_matches(symbol, '^[0-9]')
+           AND symbol NOT ILIKE '%NSETEST%'`,
+      );
+      const brand = new Map();
+      const add = (k, r) => {
+        if (!k) return;
+        if (!brand.has(k)) brand.set(k, new Map());
+        brand.get(k).set(r.symbol, r);
+      };
+      for (const r of rows) {
+        const { full2, solo } = aliasesOf(r.company_name);
+        add(full2, r);
+        add(solo, r);
+      }
+      // Drop ambiguous keys: a solo (single word) that maps to more than one
+      // symbol, or any key that maps to more than three — guessing there is worse
+      // than leaving the article untagged.
+      for (const [k, m] of brand) {
+        const oneWord = !k.includes(' ');
+        if ((oneWord && m.size > 1) || m.size > 3) brand.delete(k);
+      }
+      return brand;
+    })();
+  }
+  return brandIndexPromise;
+}
+
+// RSS descriptions arrive HTML-encoded (sometimes double-encoded: "&amp;nbsp;")
+// and may carry stray markup. Decode entities (up to two passes), strip tags,
+// and collapse whitespace so the UI shows clean text.
+function decodeText(s) {
+  if (!s) return '';
+  let t = String(s);
+  for (let i = 0; i < 2 && /&[a-z#0-9]+;/i.test(t); i++) {
+    t = cheerio.load(`<div>${t}</div>`).root().text();
+  }
+  return t.replace(/ /g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// Every word of the matched span begins with a capital — a proper noun as
+// written ("Niva Bupa", "RELIANCE"), not the common-noun sense ("page", "metal").
+const isProperNoun = (span) => span.split(/\s+/).every((w) => /^[A-Z0-9&]/.test(w));
+
+// Tag a headline with the stocks it names. Match the TITLE only (the subject
+// company lives there; descriptions add noise), with word boundaries.
+function tagStocks(title, brand) {
+  const found = new Map();
+  for (const [k, m] of brand) {
+    const re = new RegExp(`\\b${escapeRe(k).replace(/ /g, '\\s+')}\\b`, 'ig');
+    let x;
+    while ((x = re.exec(title))) {
+      if (isProperNoun(x[0])) {
+        for (const r of m.values()) found.set(r.symbol, r);
+        break;
+      }
+    }
+  }
+  return [...found.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
+}
+
+// ---- feed fetch + cache --------------------------------------------------
+
+// Read today.xml if it was written today; otherwise fetch fresh and rewrite it.
+// On a fetch failure fall back to any cached copy (even a stale one) so the tab
+// still renders — never abort the request.
+async function ensureFeedXml() {
+  try {
+    const stat = await fs.stat(CACHE_FILE);
+    if (stat.mtime.toDateString() === new Date().toDateString()) {
+      return fs.readFile(CACHE_FILE, 'utf8');
+    }
+  } catch {
+    /* no cache yet */
+  }
+  try {
+    const res = await fetch(FEED_URL, { headers: { 'User-Agent': UA, Accept: 'application/rss+xml, application/xml' } });
+    if (!res.ok) throw new Error(`LiveMint feed HTTP ${res.status}`);
+    const xml = await res.text();
+    await fs.mkdir(CACHE_DIR, { recursive: true });
+    await fs.writeFile(CACHE_FILE, xml);
+    return xml;
+  } catch (err) {
+    // network hiccup — serve the last cached copy if we have one.
+    try {
+      return await fs.readFile(CACHE_FILE, 'utf8');
+    } catch {
+      throw err;
+    }
+  }
+}
+
+// The full parsed feed: every article in today.xml, newest first, each tagged
+// with the NSE stock(s) it mentions (empty array for general/global news). The
+// "News" tab shows all of these by default and filters by a tagged stock.
+export async function getNews() {
+  const [xml, brand] = await Promise.all([ensureFeedXml(), loadBrandIndex()]);
+  const $ = cheerio.load(xml, { xmlMode: true });
+  const items = [];
+  $('item').each((_, el) => {
+    const node = $(el);
+    const title = decodeText(node.find('title').first().text());
+    if (!title) return;
+    const pub = node.find('pubDate').first().text().trim();
+    const published = pub ? new Date(pub) : null;
+    items.push({
+      title,
+      link: node.find('link').first().text().trim() || node.find('guid').first().text().trim(),
+      description: decodeText(node.find('description').first().text()),
+      published: published && !Number.isNaN(published.valueOf()) ? published.toISOString() : null,
+      image: node.find('media\\:content, content').first().attr('url') || null,
+      symbols: tagStocks(title, brand),
+    });
+  });
+  items.sort((a, b) => (b.published ?? '').localeCompare(a.published ?? ''));
+  return items;
+}

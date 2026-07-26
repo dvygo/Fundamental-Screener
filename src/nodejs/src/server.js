@@ -1,9 +1,20 @@
 // REST API — serves data/extracts/ (bhavcopy + XBRL facts) as JSON.
-// Layer A screens (requirement.md 1-5) + upper/lower circuit, and now
-// stock-centric Layer B (B1 insider, B2 promoter shareholding). Layer C
-// (news) needs screener.in dossiers, not yet present in data/.
+// Layer A screens (requirement.md 1-5) + upper/lower circuit, stock-centric
+// Layer B (B1 insider, B2 promoter shareholding), and Layer C news (the
+// LiveMint companies feed, each article tagged with the NSE stock it names).
 
+import process from 'node:process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
+
+// Load src/nodejs/.env (gitignored secrets: screener.in login). Node 24 native;
+// tolerate a missing file so the API still boots without credentials.
+try {
+  process.loadEnvFile(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.env'));
+} catch {
+  /* no .env — screener auth just stays disabled */
+}
 import {
   screen1_high52wLastDay,
   screen2_high52wEvents,
@@ -15,8 +26,9 @@ import {
   screen6a_upperCircuit,
   screen6b_lowerCircuit,
 } from './screens.js';
-import { searchCompanies, companyInsider, companyShareholding, companyDrilldown } from './companies.js';
+import { searchCompanies, companyInsider, companyShareholding, companyDrilldown, companyPromoters, listSeries } from './companies.js';
 import { corporateActions } from './corporate.js';
+import { getNews } from './news.js';
 
 const PORT = process.env.PORT || 3000;
 const app = express();
@@ -89,9 +101,15 @@ app.get('/api/screens/gainers/recurrence', route((req, res) => {
 
 app.get('/api/corporate-actions', route(() => corporateActions()));
 
+// Layer C — LiveMint "companies" news, each article tagged with the NSE
+// symbol(s) it names (see src/news.js). Default view shows every article.
+app.get('/api/news', route(() => getNews()));
+
 app.get('/api/screens/upper-circuit', route(() => screen6a_upperCircuit()));
 
 app.get('/api/screens/lower-circuit', route(() => screen6b_lowerCircuit()));
+
+app.get('/api/series', route(() => listSeries()));
 
 app.get('/api/companies', route((req, res) => {
   const q = (req.query.q || '').trim();
@@ -99,7 +117,8 @@ app.get('/api/companies', route((req, res) => {
     res.status(400).json({ error: "query param 'q' is required" });
     return null;
   }
-  return searchCompanies(q);
+  const series = (req.query.series || 'EQ').trim().toUpperCase() || 'EQ';
+  return searchCompanies(q, series);
 }));
 
 app.get('/api/companies/:symbol/drilldown', route((req) => companyDrilldown(req.params.symbol.toUpperCase())));
@@ -107,6 +126,8 @@ app.get('/api/companies/:symbol/drilldown', route((req) => companyDrilldown(req.
 app.get('/api/companies/:symbol/insider', route((req) => companyInsider(req.params.symbol.toUpperCase())));
 
 app.get('/api/companies/:symbol/shareholding', route((req) => companyShareholding(req.params.symbol.toUpperCase())));
+
+app.get('/api/companies/:symbol/promoters', route((req) => companyPromoters(req.params.symbol.toUpperCase())));
 
 app.listen(PORT, () => {
   console.log(`Fundamental-Screener API listening on :${PORT}`);

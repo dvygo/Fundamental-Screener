@@ -4,6 +4,7 @@ import type { Row } from "@/lib/screens";
 export interface CompanyMatch {
   symbol: string;
   company_name: string;
+  isin: string;
 }
 
 export interface Drilldown {
@@ -26,8 +27,12 @@ export interface Drilldown {
   source: "screener" | "nse";
 }
 
-export function searchCompanies(q: string): Promise<CompanyMatch[]> {
-  return fetchJson(`/companies?q=${encodeURIComponent(q)}`);
+export function listSeries(): Promise<string[]> {
+  return fetchJson(`/series`);
+}
+
+export function searchCompanies(q: string, series: string): Promise<CompanyMatch[]> {
+  return fetchJson(`/companies?q=${encodeURIComponent(q)}&series=${encodeURIComponent(series)}`);
 }
 
 export function companyDrilldown(symbol: string): Promise<Drilldown | null> {
@@ -40,4 +45,10 @@ export function companyInsider(symbol: string): Promise<Row[]> {
 
 export function companyShareholding(symbol: string): Promise<Row[]> {
   return fetchJson(`/companies/${encodeURIComponent(symbol)}/shareholding`);
+}
+
+// The promoter roster (screener's expanded "Promoters +"): one row per promoter
+// entity, a column per quarter. null when the symbol has no screener page.
+export function companyPromoters(symbol: string): Promise<Row[] | null> {
+  return fetchJson(`/companies/${encodeURIComponent(symbol)}/promoters`);
 }
