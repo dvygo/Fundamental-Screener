@@ -217,17 +217,27 @@ def rebuild() -> int:
     seen_rows = 0
     for f in files:
         snap_day = datetime.strptime(f.parent.name, "%Y%m%d").date()
+        # Which sitemap this row came from. A story legitimately appears in BOTH
+        # over its lifetime — in today.xml on the day it ran, then again in the
+        # next day's yesterday.xml — so this can't be a per-row label that
+        # survives dedup. `shard` records the most authoritative sighting:
+        # 'yesterday' the moment we ever see it in a completed day, else
+        # 'today'. That is exactly the rule the API serves history by.
+        shard = f.stem
         for row in parse_snapshot(f):
             seen_rows += 1
             prior = best.get(row["url"])
             if prior is None:
                 best[row["url"]] = {
                     **row,
+                    "shard": shard,
                     "first_seen": snap_day,
                     "last_seen": snap_day,
                     "_lastmods": {row["lastmod"]} if row["lastmod"] else set(),
                 }
                 continue
+            if shard == "yesterday":
+                prior["shard"] = "yesterday"
             prior["first_seen"] = min(prior["first_seen"], snap_day)
             prior["last_seen"] = max(prior["last_seen"], snap_day)
             if row["publication_date"] and (
@@ -258,7 +268,7 @@ def rebuild() -> int:
 
     cols = ["url", "msid", "title", "section", "subsection", "publication_date",
             "lastmod", "keywords", "language", "amp_url", "image_url",
-            "first_seen", "last_seen", "revisions", "source"]
+            "shard", "first_seen", "last_seen", "revisions", "source"]
     STORE.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect()
     con.execute("""
@@ -266,7 +276,8 @@ def rebuild() -> int:
             url VARCHAR, msid VARCHAR, title VARCHAR, section VARCHAR,
             subsection VARCHAR, publication_date TIMESTAMPTZ, lastmod TIMESTAMPTZ,
             keywords VARCHAR, language VARCHAR, amp_url VARCHAR, image_url VARCHAR,
-            first_seen DATE, last_seen DATE, revisions INTEGER, source VARCHAR)
+            shard VARCHAR, first_seen DATE, last_seen DATE, revisions INTEGER,
+            source VARCHAR)
     """)
     con.executemany(
         "INSERT INTO news VALUES (" + ",".join("?" * len(cols)) + ")",
