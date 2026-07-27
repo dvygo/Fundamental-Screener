@@ -66,3 +66,11 @@ next-env.d.ts
 # OS / editor
 .DS_Store
 Thumbs.db
+# AppleDouble sidecars — macOS writes a ._<name> resource-fork twin for every file
+# it touches (Time Machine / external-drive backups, zip round-trips). They keep
+# reappearing next to committed data; never commit them.
+._*
+.AppleDouble
+.Spotlight-V100
+.Trashes
+__MACOSX/
