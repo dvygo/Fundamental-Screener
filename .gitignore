@@ -43,6 +43,15 @@ data/backup/**
 docker/.env
 *.original.md
 
+# Google Cloud service-account key(s) — rclone → Drive sync (src/python/data_sync.py).
+# NEVER commit; the key is copied to each server's root manually.
+/fundamental-screener-*.json
+*service-account*.json
+*.serviceaccount.json
+# rclone config + local sync settings (may embed the key path / shared-drive id)
+/rclone.conf
+/.data-sync.env
+
 # Crawl4AI / Playwright caches
 .crawl4ai/
 
