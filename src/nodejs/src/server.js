@@ -31,7 +31,7 @@ import {
 } from './screens.js';
 import { searchCompanies, companyInsider, companyShareholding, companyDrilldown, companyPromoters, listSeries, insiderRecent } from './companies.js';
 import { corporateActions } from './corporate.js';
-import { getNews } from './news.js';
+import { getNews, getSitemapNews } from './news.js';
 import { huntBoard } from './hunt.js';
 import { listFundManagers, listFirms, firmSearch } from './firms.js';
 
@@ -158,6 +158,13 @@ app.get('/api/firm-search', route((req, res) => {
   }
   return firmSearch(q);
 }));
+
+// LiveMint sitemaps, fetched on demand and served as their own News sections
+// alongside the RSS feed above. today = the day so far, yesterday = the
+// completed day before it; the two are disjoint by publication date.
+app.get('/api/news/sitemap/today', route(() => getSitemapNews('today')));
+
+app.get('/api/news/sitemap/yesterday', route(() => getSitemapNews('yesterday')));
 
 app.get('/api/screens/upper-circuit', route(() => screen6a_upperCircuit()));
 

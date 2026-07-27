@@ -39,6 +39,111 @@ const FEED_URL = 'https://www.livemint.com/rss/companies';
 const ttlRaw = process.env.LIVEMINT_FEED_TTL_SECONDS;
 const ttlEnv = ttlRaw === undefined || ttlRaw.trim() === '' ? NaN : Number(ttlRaw);
 const FEED_TTL_MS = (Number.isFinite(ttlEnv) && ttlEnv >= 0 ? ttlEnv : 300) * 1000;
+
+// ---- sitemaps (today.xml / yesterday.xml) --------------------------------
+//
+// A second, independent source from the RSS feed above. LiveMint's two
+// Google-News sitemaps are partitioned by publication day and disjoint:
+// today.xml is the day so far, yesterday.xml the completed day before. The News
+// tab renders them as their own sections, so the same story appearing in both
+// the RSS and a sitemap is expected and not deduped across sections.
+//
+// Fetched on demand, unlike Python's scheduled capture. The disk copy is only
+// rewritten when the bytes actually differ, so an unchanged sitemap costs no
+// write and keeps its mtime; a fetch failure falls back to whatever is on disk.
+//
+// This cache is deliberately NOT data/raw/livemint/sitemap/<YYYYMMDD>/ — that
+// tree belongs to src/python/livemint_snapshot.py, which owns the durable
+// end-of-day archive. Node must never overwrite a captured snapshot: it holds
+// the only copy of a day LiveMint has already dropped.
+const SITEMAP_DIR = path.join(CACHE_DIR, 'sitemap-live');
+const ROBOTS_URL = 'https://www.livemint.com/robots.txt';
+const SITEMAP_NAMES = ['today.xml', 'yesterday.xml'];
+
+// Short floor between refetches. "On demand" still has to respect the pacing
+// rule — without it a burst of tab loads is a burst of upstream requests.
+const smTtlRaw = process.env.LIVEMINT_SITEMAP_TTL_SECONDS;
+const smTtl = smTtlRaw === undefined || smTtlRaw.trim() === '' ? NaN : Number(smTtlRaw);
+const SITEMAP_TTL_MS = (Number.isFinite(smTtl) && smTtl >= 0 ? smTtl : 60) * 1000;
+
+// robots.txt is both how the sitemap URLs are discovered and the permission to
+// fetch them — they are never written down here. Resolved once per process.
+let sitemapUrls = null;
+async function discoverSitemaps() {
+  if (sitemapUrls) return sitemapUrls;
+  const res = await fetch(ROBOTS_URL, { headers: { 'User-Agent': UA } });
+  if (!res.ok) throw new Error(`LiveMint robots.txt HTTP ${res.status}`);
+  const found = {};
+  for (const line of (await res.text()).split(/\r?\n/)) {
+    if (!line.toLowerCase().startsWith('sitemap:')) continue;
+    const url = line.slice(line.indexOf(':') + 1).trim();
+    const name = url.split('/').pop();
+    if (SITEMAP_NAMES.includes(name) && !found[name]) found[name] = url;
+  }
+  sitemapUrls = found;
+  return found;
+}
+
+async function ensureSitemapXml(name) {
+  const dest = path.join(SITEMAP_DIR, name);
+  try {
+    const stat = await fs.stat(dest);
+    if (Date.now() - stat.mtimeMs < SITEMAP_TTL_MS) return fs.readFile(dest, 'utf8');
+  } catch {
+    /* not cached yet */
+  }
+  try {
+    const urls = await discoverSitemaps();
+    const url = urls[name];
+    if (!url) throw new Error(`robots.txt does not advertise ${name}`);
+    const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/xml' } });
+    if (!res.ok) throw new Error(`LiveMint ${name} HTTP ${res.status}`);
+    const xml = await res.text();
+    await fs.mkdir(SITEMAP_DIR, { recursive: true });
+    // Rewrite only on a real change; an identical body leaves the file alone.
+    let unchanged = false;
+    try {
+      unchanged = (await fs.readFile(dest, 'utf8')) === xml;
+    } catch {
+      /* no prior copy */
+    }
+    if (!unchanged) await fs.writeFile(dest, xml);
+    return xml;
+  } catch (err) {
+    try {
+      return await fs.readFile(dest, 'utf8');
+    } catch {
+      throw err;
+    }
+  }
+}
+
+// One sitemap -> the same item shape the RSS path returns, so the UI renders
+// both with one component. <news:keywords> stands in for the RSS description.
+export async function getSitemapNews(which) {
+  const name = `${which}.xml`;
+  if (!SITEMAP_NAMES.includes(name)) throw new Error(`unknown sitemap: ${which}`);
+  const [xml, brand] = await Promise.all([ensureSitemapXml(name), loadBrandIndex()]);
+  const $ = cheerio.load(xml, { xmlMode: true });
+  const items = [];
+  $('url').each((_, el) => {
+    const node = $(el);
+    const title = decodeText(node.find('news\\:title, title').first().text());
+    if (!title) return;
+    const pub = node.find('news\\:publication_date, publication_date').first().text().trim();
+    const published = pub ? new Date(pub) : null;
+    items.push({
+      title,
+      link: node.find('loc').first().text().trim(),
+      description: decodeText(node.find('news\\:keywords, keywords').first().text()),
+      published: published && !Number.isNaN(published.valueOf()) ? published.toISOString() : null,
+      image: node.find('image\\:loc').first().text().trim() || null,
+      symbols: tagStocks(title, brand),
+    });
+  });
+  items.sort((a, b) => (b.published ?? '').localeCompare(a.published ?? ''));
+  return items;
+}
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36';
 
 // ---- stock tagging -------------------------------------------------------
