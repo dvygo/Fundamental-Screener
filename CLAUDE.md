@@ -8,6 +8,20 @@ the same toolkit and discipline.
 
 Read `context/sources.md` before touching scrapers.
 
+## Taking over? Do this first
+
+New-agent onboarding — **follow in order, don't skip**:
+
+1. **Read the onboarding spine.** `context/00-start-here.md` → `07`, in order — the
+   guided tour of the whole system (architecture, data, storage, the HUNT
+   scoreboard, the frontend submodule, current state, and the mission).
+2. **Build memory next.** *Before changing any code*, write the durable facts you
+   learned into your persistent project memory: the architecture and ports, the
+   **HUNT scoring model + its five honesty rules**, the data-coverage caveat, the
+   secret/commit constraints, and the open threads. Memory before code.
+3. **Then refactor** — per `context/07-your-mission.md`, with its guardrails (secret
+   guard first, `tsc`/`eslint` clean, verify against real data, commit only when asked).
+
 ## Stack
 
 - Python 3.11+, `httpx` + BeautifulSoup/lxml; Crawl4AI (Playwright) for JS-heavy
@@ -16,9 +30,9 @@ Read `context/sources.md` before touching scrapers.
 
 ## Layout
 
-- `src/` — one script per source/stage (`screener_company.py` first)
+- `src/` — `python/` (ELT scrapers/loaders), `nodejs/` (REST API on :3000, DuckDB), `nextjs/` (UI submodule → hunt-internal, :3001)
 - `setup/` — `requirements.txt`
-- `context/` — source assessment and design notes
+- `context/` — onboarding spine (`00`–`07`), design notes, `reference/`, `archive/`
 - `data/companies/` — parsed dossiers (committed)
 - `data/bod/` — **raw manual drops** (NSE/BSE bhavcopies, daily reports) — the pre-processing inbox (committed)
 - `data/backup/YYYYMMDD/` — mirror of every processed file also written to MinIO (committed; DR)
@@ -36,8 +50,9 @@ Storage tiering (disk → MinIO, services read MinIO only): see `context/storage
 ```bash
 pip install -r setup/requirements.txt
 playwright install chromium                 # only if a scraper needs the browser
-python src/screener_company.py RELIANCE TCS INFY
-python src/screener_company.py --file data/universe.txt
+python src/python/screener_company.py RELIANCE TCS INFY
+node src/nodejs/src/server.js                # REST API on :3000
+# frontend (submodule): cd src/nextjs && npm install && npm run dev   # :3001
 ```
 
 ## Conventions
