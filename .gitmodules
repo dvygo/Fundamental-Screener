@@ -1,0 +1,3 @@
+[submodule "src/nextjs"]
+	path = src/nextjs
+	url = git@github.com:dvygo/hunt-internal.git
