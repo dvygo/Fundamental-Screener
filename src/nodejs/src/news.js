@@ -5,7 +5,17 @@
 //
 // Node does the scraping (screener + now RSS); Python stays on static-file
 // extraction. The feed is one small request, so no pacing gate is needed — but
-// we still cache to disk and re-parse from cache within the same day.
+// we still cache to disk and re-parse from cache while the copy is fresh.
+//
+// "Fresh" is a short TTL, not the calendar day: this is a live feed that gains
+// stories all day, so a day-long cache would pin the tab to whatever the first
+// request of the morning happened to see. Today's news is served on demand;
+// completed days come from data/store/news.parquet, which Python builds from
+// the yesterday.xml sitemap snapshots (see src/python/livemint_snapshot.py).
+//
+// Note the filename collision: this cache is the RSS feed, while Python's
+// snapshots of the *sitemap* live under data/raw/livemint/sitemap/<date>/.
+// Different sources, different directories.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -22,6 +32,13 @@ const CACHE_FILE = path.join(CACHE_DIR, 'today.xml');
 // LiveMint's "companies" feed — the same page as livemint.com/companies. Real,
 // documented RSS (livemint.com/rss); never a fabricated URL.
 const FEED_URL = 'https://www.livemint.com/rss/companies';
+// How long a cached copy stays servable. Short enough that the tab reflects the
+// feed within minutes, long enough that a burst of requests is one fetch.
+// Override with LIVEMINT_FEED_TTL_SECONDS (0 = always refetch; `|| 300` would
+// swallow a deliberate 0, so validate instead).
+const ttlRaw = process.env.LIVEMINT_FEED_TTL_SECONDS;
+const ttlEnv = ttlRaw === undefined || ttlRaw.trim() === '' ? NaN : Number(ttlRaw);
+const FEED_TTL_MS = (Number.isFinite(ttlEnv) && ttlEnv >= 0 ? ttlEnv : 300) * 1000;
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36';
 
 // ---- stock tagging -------------------------------------------------------
@@ -135,13 +152,13 @@ function tagStocks(title, brand) {
 
 // ---- feed fetch + cache --------------------------------------------------
 
-// Read today.xml if it was written today; otherwise fetch fresh and rewrite it.
-// On a fetch failure fall back to any cached copy (even a stale one) so the tab
-// still renders — never abort the request.
+// Serve the cached copy only while it is younger than the TTL; otherwise fetch
+// fresh and rewrite it. On a fetch failure fall back to any cached copy (even a
+// stale one) so the tab still renders — never abort the request.
 async function ensureFeedXml() {
   try {
     const stat = await fs.stat(CACHE_FILE);
-    if (stat.mtime.toDateString() === new Date().toDateString()) {
+    if (Date.now() - stat.mtimeMs < FEED_TTL_MS) {
       return fs.readFile(CACHE_FILE, 'utf8');
     }
   } catch {
