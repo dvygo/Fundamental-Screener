@@ -122,9 +122,18 @@ def run(date: str | None, keep_archives: bool):
     if not RAW.is_dir():
         raise SystemExit(f"no raw folder: {RAW}")
 
-    files = sorted(p for p in RAW.rglob("*") if p.is_file())
+    # macOS drops an AppleDouble twin (._<name>) beside every file it backs up,
+    # and a ._x.zip carries the real name's date and .zip suffix — so it would be
+    # dated, then handed to ZipFile, and blow up the whole run on BadZipFile.
+    # They reappear after every backup, so skip them here rather than by hand.
+    files = sorted(p for p in RAW.rglob("*")
+                   if p.is_file() and not p.name.startswith("._") and p.name != ".DS_Store")
     if not files:
         raise SystemExit(f"no files in {RAW}")
+    junk = sum(1 for p in RAW.rglob("*")
+               if p.is_file() and (p.name.startswith("._") or p.name == ".DS_Store"))
+    if junk:
+        log.info("ignored %d macOS sidecar file(s) in %s", junk, RAW)
 
     by_date: dict[str, list[Path]] = {}
     for path in files:
