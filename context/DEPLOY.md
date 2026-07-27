@@ -61,25 +61,30 @@ in [storage.md](storage.md).
 ## Data backup — Drive snapshots (rclone)
 
 `src/python/data_sync.py` pushes the whole `data/` tree to the **Fundamental-Screener**
-Google shared drive as **manual, append-only, timestamped snapshots** (`rclone copy`
-into `data-YYYYMMDD_T_HHMMSS`). It never deletes — losing local files can't touch
-earlier snapshots; disaster recovery is downloading a snapshot by hand.
+Google shared drive as **manual, append-only, compressed snapshots**: it tars+gzips
+`data/` into one `data-YYYYMMDD_T_HHMMSS.tar.gz` and uploads that **single file**
+(one big object, not thousands of tiny ones — Drive's per-file overhead makes the
+file-by-file approach crawl). It never deletes — losing local files can't touch
+earlier snapshots; disaster recovery is `pull` then `tar xzf`. Prune old archives
+yourself.
 
 ```bash
-brew install rclone                                # system prerequisite (Go binary)
-python src/python/data_sync.py config              # resolved config (no secrets)
+brew install rclone                                # system prerequisite (Go binary; apt/curl on Linux)
+# pigz optional — parallel gzip, used automatically if present for a faster tar
+python src/python/data_sync.py config              # resolved config + data size (no secrets)
 python src/python/data_sync.py drives              # auth test — lists the shared drive
-python src/python/data_sync.py push --dry-run      # preview (uploads nothing)
-python src/python/data_sync.py push                # new snapshot: data/ -> drive:data-<ts>
-python src/python/data_sync.py ls                  # list existing snapshots
-python src/python/data_sync.py pull data-<ts>      # download a snapshot (additive)
+python src/python/data_sync.py push --dry-run      # preview (builds/uploads nothing)
+python src/python/data_sync.py push                # tar.gz data/ -> drive:data-<ts>.tar.gz
+python src/python/data_sync.py archive             # build the tar.gz locally only
+python src/python/data_sync.py ls                  # list snapshot archives (with sizes)
+python src/python/data_sync.py pull data-<ts>.tar.gz --extract   # download + unpack
 ```
 
 Auth is a Google **service-account** JSON key — a **secret**: gitignored
 (`/fundamental-screener-*.json`) and copied to each server's root by hand, never
 committed. Non-secret overrides go in a gitignored `.data-sync.env` (see
-`setup/data_sync.env.example`). Each push re-uploads the full ~data size (no
-cross-snapshot dedup — that's the point: independent immutable copies).
+`setup/data_sync.env.example`). The archive is staged under `/.snapshots/`
+(gitignored) and deleted after upload unless `--keep`.
 
 ## Production notes
 

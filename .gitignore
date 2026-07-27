@@ -51,6 +51,8 @@ docker/.env
 # rclone config + local sync settings (may embed the key path / shared-drive id)
 /rclone.conf
 /.data-sync.env
+# Local tar.gz build staging for data_sync.py push (rebuilt each run).
+/.snapshots/
 
 # Crawl4AI / Playwright caches
 .crawl4ai/
