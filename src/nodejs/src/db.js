@@ -20,6 +20,17 @@ const STORE = path.join(ROOT, 'data', 'store').split(path.sep).join('/');
 // NSE month names are UPPERCASE ("23-JUL-2025"); strptime %b matches case-insensitively.
 const D = (col) => `try_strptime(${col}, '%d-%b-%Y')::date`;
 
+// The YYYYMMDD extracts folder a file came from. read_csv's `filename` carries
+// the OS's own separator, so the '/([0-9]{8})/' regex this replaced matched
+// nothing on Windows — every extraction returned '', which crashed the circuit
+// view outright (strptime('') throws) and broke the rest silently: max('') = ''
+// made security_master's "latest file only" filter match every file, and the
+// hi52 / lo52 / mcap / pe "newest folder wins" dedups fell back to arbitrary
+// order. parse_path(..., 'both_slash') splits on either separator; [-2] is the
+// folder holding the file. Don't reach for a bare '([0-9]{8})' here — these
+// filenames carry their own 8-digit DDMMYYYY stamp (bh21052026.csv).
+const FOLDER_DATE = (col = 'filename') => `parse_path(${col}, 'both_slash')[-2]`;
+
 let connectionPromise = null;
 
 async function createConnection() {
@@ -30,6 +41,7 @@ async function createConnection() {
   const wk = `${EXTRACTS}/*/CM_52_wk_High_low*.csv`;
   const sec = `${EXTRACTS}/*/NSE_CM_security_*.csv`;
   const bh = `${EXTRACTS}/*/bh*.csv`;
+  const gl = `${EXTRACTS}/*/gl*.csv`;
   const mcapCsv = `${EXTRACTS}/*/mcap*.csv`;
   const peCsv = `${EXTRACTS}/*/PE_*.csv`;
   const bc = `${EXTRACTS}/*/bc*.csv`;
@@ -65,7 +77,7 @@ async function createConnection() {
              TRY_CAST(replace(adjusted_52_week_high, ' ', '') AS DOUBLE) AS price,
              row_number() OVER (
                PARTITION BY trim(symbol), ${D('_52_week_high_date')}
-               ORDER BY regexp_extract(filename, '/([0-9]{8})/', 1) DESC
+               ORDER BY ${FOLDER_DATE()} DESC
              ) AS rn
       FROM read_csv('${wk}', header=true, all_varchar=true, normalize_names=true,
                     skip=2, filename=true, union_by_name=true)
@@ -81,7 +93,7 @@ async function createConnection() {
              TRY_CAST(replace(adjusted_52_week_low, ' ', '') AS DOUBLE) AS price,
              row_number() OVER (
                PARTITION BY trim(symbol), ${D('_52_week_low_dt')}
-               ORDER BY regexp_extract(filename, '/([0-9]{8})/', 1) DESC
+               ORDER BY ${FOLDER_DATE()} DESC
              ) AS rn
       FROM read_csv('${wk}', header=true, all_varchar=true, normalize_names=true,
                     skip=2, filename=true, union_by_name=true)
@@ -93,8 +105,22 @@ async function createConnection() {
   // string as-is. Not every symbol has an EQ row (SME board symbols only ever
   // list under SM/SL/SQ/ST) so this doesn't filter by series - just picks the
   // most recent date folder's row per symbol (name is the same across series).
+  //
+  // TABLE, not a view — and this one matters. As a view it re-read every
+  // NSE_CM_security_*.csv in every date folder on every query that shows a
+  // company name, which is most of them. Free at 5 folders, 1.8s at 58:
+  // measured 2026-07-27, the recurrence endpoint spent 2,288ms of its 2,943ms
+  // right here, and it grows with each backfill. Materialised it reads in 6ms.
+  //
+  // Restricting the glob to the newest file was tried and rejected: the
+  // filename filter isn't pushed down (still 1,062ms) and it drops the 137
+  // delisted/suspended symbols that only appear in older masters.
+  //
+  // Trade-off is staleness — this snapshots at connection time, so a symbol
+  // listed after the API booted has no name until restart. Everything
+  // date-partitioned (prices, hi52, circuit) stays a view and stays live.
   await connection.run(`
-    CREATE OR REPLACE VIEW security AS
+    CREATE OR REPLACE TABLE security AS
     SELECT symbol, company_name FROM (
       SELECT trim(tckrsymb) AS symbol, trim(fininstrmnm) AS company_name,
              row_number() OVER (PARTITION BY trim(tckrsymb) ORDER BY filename DESC, sctysrs) AS rn
@@ -108,12 +134,16 @@ async function createConnection() {
   // series) with the exact NSE strings: TckrSymb, SctySrs, FinInstrmNm, ISIN.
   // The Stock Centric search filters on this by series (default EQ), so the
   // whole per-series universe is queryable, not a single deduped row per symbol.
+  //
+  // Also a TABLE, same reason as `security`: "the latest file" is computed from
+  // max(file_date) *after* reading them all, so as a view it paid the full
+  // 58-file scan on every search keystroke.
   await connection.run(`
-    CREATE OR REPLACE VIEW security_master AS
+    CREATE OR REPLACE TABLE security_master AS
     WITH raw AS (
       SELECT trim(tckrsymb) AS symbol, trim(sctysrs) AS series,
              trim(fininstrmnm) AS company_name, trim(isin) AS isin,
-             regexp_extract(filename, '/([0-9]{8})/', 1) AS file_date
+             ${FOLDER_DATE()} AS file_date
       FROM read_csv('${sec}', header=true, all_varchar=true, normalize_names=true,
                     filename=true, union_by_name=true)
     )
@@ -127,13 +157,88 @@ async function createConnection() {
   // own readme.txt shipped in the daily PR bundle). H = upper, L = lower.
   // No date column in the file itself - as_of comes from the YYYYMMDD extracts
   // folder embedded in the file's own path.
+  // NSE's own gainers/losers list (gl<date>.csv), the authoritative source for
+  // which stocks moved and by how much: GAIN_LOSS is NSE's G/L flag and
+  // PERCENT_CG its own % change, so nothing is recomputed from close/prev_close.
+  //
+  // It keys on company name only — no symbol, no series — so it has to be
+  // bridged through the security master. Two traps, both measured 2026-07-27:
+  //
+  //  * Do NOT filter the master to series 'EQ'. gl covers the SME boards too and
+  //    those never list as EQ (SM/SL/SQ/ST), so an EQ-only bridge resolved just
+  //    64.7% of names and silently dropped 1,346 real listings. Across all
+  //    series it resolves 96.6% with zero unmatched.
+  //  * DelFlg='N' is what disambiguates. A name like "TATA CONSUMER PRODUCT LTD"
+  //    maps to both TATACONSUM and the dead TATACON-RE rights entitlement;
+  //    honouring the master's delete flag drops the corpse (135 names still tie,
+  //    broken below by preferring EQ, then the shorter symbol).
+  //
+  // The series filter is what keeps debt off an equity board, NOT the symbol
+  // being non-null — NCDs have symbols too (1025SCL34 was ranking as a top
+  // "gainer" until this landed). Main board is EQ only: BE is the trade-to-trade
+  // segment and anything genuinely listed there also carries an EQ row, so
+  // including it bought nothing and widened the ambiguity. SME keeps SM/ST/SL/SQ
+  // — those boards never issue an EQ row at all, and dropping them silently lost
+  // 1,346 real listings. Bonds and SGBs sit on numeric/letter debt series (18,
+  // Z8, N9, U9), so they stay unresolved and the screens' `symbol IS NOT NULL`
+  // drops them.
+  //
+  // read_csv's normalize_names mangles the SECURITY column to `_security`
+  // (leading underscore) — it collides with a reserved word. Don't "fix" it.
+  await connection.run(`
+    CREATE OR REPLACE TABLE gl_symbol AS
+    SELECT name_key, symbol FROM (
+      SELECT upper(trim(fininstrmnm)) AS name_key, trim(tckrsymb) AS symbol,
+             row_number() OVER (
+               PARTITION BY upper(trim(fininstrmnm))
+               ORDER BY (trim(sctysrs) = 'EQ') DESC,
+                        length(trim(tckrsymb)), trim(tckrsymb)
+             ) AS rn
+      FROM read_csv('${sec}', header=true, all_varchar=true, normalize_names=true,
+                    union_by_name=true)
+      WHERE trim(delflg) = 'N' AND trim(fininstrmnm) <> ''
+        AND trim(sctysrs) IN ('EQ', 'SM', 'ST', 'SL', 'SQ')
+    ) WHERE rn = 1
+  `);
+
+  // One row per (session, security) with NSE's direction and % move, carrying
+  // the resolved symbol. Rows that still don't bridge (bonds, SGBs — gl is not
+  // equity-only) keep a NULL symbol rather than being dropped, so a screen can
+  // decide for itself whether to require one.
+  await connection.run(`
+    CREATE OR REPLACE VIEW gainloss AS
+    SELECT * FROM (
+      SELECT try_strptime(${FOLDER_DATE()}, '%Y%m%d')::date AS as_of,
+             b.symbol AS symbol,
+             trim(g._security) AS security_name,
+             trim(g.gain_loss) AS direction,
+             TRY_CAST(trim(g.percent_cg) AS DOUBLE) AS pct_change,
+             TRY_CAST(trim(g.close_pric) AS DOUBLE) AS close,
+             TRY_CAST(trim(g.prev_cl_pr) AS DOUBLE) AS prev_close
+      FROM read_csv('${gl}', header=true, all_varchar=true, normalize_names=true,
+                    filename=true, union_by_name=true) g
+      LEFT JOIN gl_symbol b ON b.name_key = upper(trim(g._security))
+      WHERE trim(g.gain_loss) IN ('G', 'L')
+    ) WHERE as_of IS NOT NULL AND pct_change IS NOT NULL
+  `);
+
+  //
+  // try_strptime, not strptime, and unparseable rows are dropped rather than
+  // raised: a single file whose path doesn't yield a YYYYMMDD folder used to
+  // take the entire view down with "Could not parse string ''", which surfaced
+  // as a 500 on both circuit screens. One odd file should cost its own rows,
+  // not every session's. The screens pick max(as_of) off this view, so a
+  // missing T-1 just means the last session that actually shipped a bh file
+  // wins — no hard fail when the newest folder is a holiday or a partial drop.
   await connection.run(`
     CREATE OR REPLACE VIEW circuit AS
-    SELECT strptime(regexp_extract(filename, '/(\\d{8})/[^/]+$', 1), '%Y%m%d')::date AS as_of,
-           trim(symbol) AS symbol, trim(series) AS series, trim(highlow) AS hit
-    FROM read_csv('${bh}', header=true, all_varchar=true, normalize_names=true,
-                  filename=true, union_by_name=true)
-    WHERE trim(series) = 'EQ'
+    SELECT * FROM (
+      SELECT try_strptime(${FOLDER_DATE()}, '%Y%m%d')::date AS as_of,
+             trim(symbol) AS symbol, trim(series) AS series, trim(highlow) AS hit
+      FROM read_csv('${bh}', header=true, all_varchar=true, normalize_names=true,
+                    filename=true, union_by_name=true)
+      WHERE trim(series) = 'EQ'
+    ) WHERE as_of IS NOT NULL
   `);
 
   // Layer B (stock-centric) — consolidated single-file stores, all history in
@@ -177,7 +282,7 @@ async function createConnection() {
              TRY_CAST(trim(close_pricepaid_up_valuers) AS DOUBLE) AS close_price,
              TRY_CAST(trim(face_valuers) AS DOUBLE) AS face_value,
              row_number() OVER (PARTITION BY trim(symbol)
-               ORDER BY regexp_extract(filename, '/([0-9]{8})/', 1) DESC) AS rn
+               ORDER BY ${FOLDER_DATE()} DESC) AS rn
       FROM read_csv('${mcapCsv}', header=true, all_varchar=true, normalize_names=true,
                     filename=true, union_by_name=true)
       WHERE trim(series) = 'EQ'
@@ -188,7 +293,7 @@ async function createConnection() {
     SELECT symbol, symbol_pe FROM (
       SELECT trim(symbol) AS symbol, TRY_CAST(symbol_pe AS DOUBLE) AS symbol_pe,
              row_number() OVER (PARTITION BY trim(symbol)
-               ORDER BY regexp_extract(filename, '/([0-9]{8})/', 1) DESC) AS rn
+               ORDER BY ${FOLDER_DATE()} DESC) AS rn
       FROM read_csv('${peCsv}', header=true, all_varchar=true, normalize_names=true,
                     filename=true, union_by_name=true)
     ) WHERE rn = 1

@@ -81,47 +81,71 @@ export function screen4b_losers(top) {
   `);
 }
 
+// "Was this stock among the day's top `top` gainers?", counted over the last `n`
+// days. Ranks each session independently, then counts the sessions a name
+// appeared in — repetition is the signal, not a single spike.
+//
+// Source is NSE's own gl<date>.csv (the `gainloss` view), not a %-change we
+// compute off the bhavcopy: NSE already publishes the direction and the figure.
+// Rows that never bridged to a symbol are excluded, which is also what keeps
+// bonds and SGBs off an equity board — gl itself is not equity-only.
+//
+// The rank window carries an explicit `symbol` tiebreaker. Without one, symbols
+// tied on pct_change at the cutoff swapped in and out between identical
+// requests, so the same query returned different rows run to run.
 export function screen5_gainersRecurrence(n, top) {
   return queryJson(`
-    WITH d AS (SELECT max(as_of) md FROM prices),
+    WITH d AS (SELECT max(as_of) md FROM gainloss),
     ranked AS (
       SELECT as_of, symbol, pct_change,
-             row_number() OVER (PARTITION BY as_of ORDER BY pct_change DESC) AS rnk
-      FROM (SELECT DISTINCT p.as_of, p.symbol, p.pct_change FROM prices p, d
-            WHERE p.pct_change IS NOT NULL AND p.as_of > d.md - INTERVAL ${n} DAY)
+             row_number() OVER (
+               PARTITION BY as_of ORDER BY pct_change DESC, symbol
+             ) AS rnk
+      FROM (SELECT DISTINCT g.as_of, g.symbol, g.pct_change FROM gainloss g, d
+            WHERE g.direction = 'G' AND g.symbol IS NOT NULL
+              AND g.as_of > d.md - INTERVAL ${n} DAY)
     )
     SELECT r.symbol, s.company_name,
            count(*) AS times_in_top,
-           round(avg(r.pct_change), 2) AS avg_pct,
+           -- DECIMAL, not the raw DOUBLE: avg() is parallelised and float
+           -- addition isn't associative, so the same query rounded to a
+           -- different last digit between runs. Exact decimal is order-free.
+           round(avg(r.pct_change::DECIMAL(12,4)), 2) AS avg_pct,
            min(r.as_of) AS first_seen, max(r.as_of) AS last_seen
     FROM ranked r
     LEFT JOIN security s ON s.symbol = r.symbol
     WHERE r.rnk <= ${top}
     GROUP BY r.symbol, s.company_name
-    ORDER BY times_in_top DESC, avg_pct DESC
+    ORDER BY times_in_top DESC, avg_pct DESC, r.symbol
   `);
 }
 
-// Losers mirror of screen5: how often each symbol sat in the BOTTOM `top` by
-// %-change across the last n sessions (rank ascending). Same window style.
+// Losers mirror of screen5: how often each symbol sat in the day's bottom `top`
+// (NSE's own 'L' rows, ranked ascending). Same window and tiebreaker rules.
 export function screen5b_losersRecurrence(n, top) {
   return queryJson(`
-    WITH d AS (SELECT max(as_of) md FROM prices),
+    WITH d AS (SELECT max(as_of) md FROM gainloss),
     ranked AS (
       SELECT as_of, symbol, pct_change,
-             row_number() OVER (PARTITION BY as_of ORDER BY pct_change ASC) AS rnk
-      FROM (SELECT DISTINCT p.as_of, p.symbol, p.pct_change FROM prices p, d
-            WHERE p.pct_change IS NOT NULL AND p.as_of > d.md - INTERVAL ${n} DAY)
+             row_number() OVER (
+               PARTITION BY as_of ORDER BY pct_change ASC, symbol
+             ) AS rnk
+      FROM (SELECT DISTINCT g.as_of, g.symbol, g.pct_change FROM gainloss g, d
+            WHERE g.direction = 'L' AND g.symbol IS NOT NULL
+              AND g.as_of > d.md - INTERVAL ${n} DAY)
     )
     SELECT r.symbol, s.company_name,
            count(*) AS times_in_bottom,
-           round(avg(r.pct_change), 2) AS avg_pct,
+           -- DECIMAL, not the raw DOUBLE: avg() is parallelised and float
+           -- addition isn't associative, so the same query rounded to a
+           -- different last digit between runs. Exact decimal is order-free.
+           round(avg(r.pct_change::DECIMAL(12,4)), 2) AS avg_pct,
            min(r.as_of) AS first_seen, max(r.as_of) AS last_seen
     FROM ranked r
     LEFT JOIN security s ON s.symbol = r.symbol
     WHERE r.rnk <= ${top}
     GROUP BY r.symbol, s.company_name
-    ORDER BY times_in_bottom DESC, avg_pct ASC
+    ORDER BY times_in_bottom DESC, avg_pct ASC, r.symbol
   `);
 }
 
