@@ -38,9 +38,27 @@ Every file in a day's drop — columns, purpose, which requirement it feeds — 
 
 | File | Concept |
 |---|---|
-| `CM_52_wk_High_low` | true **52-week** high/low (corporate-action adjusted) |
-| `hl<d>` | new **day** high/low |
+| `CM_52_wk_High_low` | 52-week high/low, **corporate-action adjusted** |
+| `hl<d>` | new **52-week** high/low *events*, unadjusted (Equity + ETFs) |
 | `bh<d>` | price-**band (circuit)** hit — H = upper, L = lower |
+| `pd<d>` | full market data incl. `HI_52_WK` / `LO_52_WK`, unadjusted |
+| `gl<d>` | NSE's own gainers/losers, sectioned Nifty 50 / Next 50 / Other |
+
+**`hl<d>` is 52-week, not day-range** — this table said "day high/low" until 2026-07-27
+and that was wrong. The bundle's own `readme.txt` says only "securities which have
+reached a new high or a new low", which reads either way, so it was checked against
+the data: for 23 Jul, `hl.PREVIOUS` equals the *prior session's 52-week high* in
+38/38 rows, but its prior day-high in only 23/38 (BOSCH: PREVIOUS 42565 = 22 Jul
+`HI_52_WK`, not its 41635 day high). It also carries 71 rows against 2,387 traded
+EQ securities — a day-range list would be all of them.
+
+**`CM_52_wk_High_low_<date>.csv` is the only source for the 52-week screens.**
+`hl<d>` and `pd<d>` also carry 52-week figures, but the bundle's `readme.txt`
+states both are *unadjusted* for bonus/split/rights — so after a corporate action
+they disagree with the adjusted series and a stock can look like it broke a high
+it never broke. `db.js`'s `hi52`/`lo52` views glob `CM_52_wk_High_low*` and
+nothing else; keep it that way. Use `hl`/`pd` for anything but the 52-week
+screens, and never mix the adjusted and unadjusted figures in one screen.
 
 ## Etiquette (read before any scraper)
 
