@@ -17,8 +17,20 @@ code — archived TODOs are historical, not current truth.**
 - **HUNT unwired signals** — volume ×1.5 confirmer; sector tailwind/headwind (±2);
   a dedicated Results/Orderbook/Capex **announcements feed** (only the LiveMint
   keyword proxy scores these today).
-- **Data coverage** — only ~5 daily bhavcopies are loaded, so price-derived signals
-  (52w, gainers/losers) are thin; insider spans ~2 months. Load more dailies.
+- **Data coverage** — closed. A backfill on 2026-07-27 took `data/extracts/` from
+  5 sessions to **54 trading sessions** (`2026-05-08` → `2026-07-24`, 78 date
+  folders including non-trading days, 162k EQ rows), so HUNT's rolling ~21-session
+  window is comfortably satisfiable. Note the drop repeats the previous session's
+  bhavcopy on non-trading days under the new date's filename — 67 bhavcopy files,
+  54 distinct sessions — which lands duplicate rows in `prices`. The screens
+  already absorb this via `SELECT DISTINCT as_of, symbol, pct_change`, so don't
+  "fix" it by deleting files, but keep the `DISTINCT` if you rewrite them.
+- **News history** — starts 2026-07-27 and only accrues forward; LiveMint has no
+  archive. See `livemint_snapshot.py`. Not yet scheduled, and a missed day cannot
+  be recovered.
+- **`shareholding_facts.parquet` has no producer** — `db.js` and `companies.js`
+  read it, the file exists in `data/store/`, but nothing in `src/python/` writes
+  it. Find or rewrite the loader before anyone needs to rebuild it.
 - **Layer C classifier** — announcement → event type (order book / capex / results
   / fund raise / board meeting / credit rating / acquisition / expansion /
   approval). Rules/keyword first, LLM later. Sources already land.

@@ -3,12 +3,16 @@
 Three tiers, one direction of flow. Deeper: [PLAN.md](PLAN.md), [DEPLOY.md](DEPLOY.md).
 
 ```
-NSE/BSE daily bundles · SEBI/NSE XBRL filings · screener.in · LiveMint RSS
-        │  Python ELT — paced, cached, robots-respecting
-        ▼
-data/extracts/ (day-partitioned market data)   +   data/store/ (consolidated filing parquet)
-        │                                            +  MinIO  raw/ (WORM) · delta/   [v2]
-        ▼
+NSE/BSE daily bundles          SEBI/NSE filing index CSVs · LiveMint sitemaps
+        │  per BOD drop                │  on index refresh / once a day
+        │  extract.py, ingest.py       │  insider_load, shareholding_load,
+        │                              │  livemint_snapshot
+        ▼                              ▼
+data/extracts/<YYYYMMDD>/          data/store/*.parquet
+  (day-partitioned market data)      (consolidated, whole history)
+        │                              │   + MinIO raw/ (WORM) · delta/   [v2]
+        └──────────────┬───────────────┘
+                       ▼
 src/nodejs/  REST API on :3000 — Express 5 + DuckDB schema-on-read over the globs;
              also does live screener.in / RSS scraping
         ▼
@@ -19,7 +23,9 @@ src/nextjs/  Next.js UI on :3001   (submodule → hunt-internal)
 
 | Area | Path | Key files |
 |---|---|---|
-| ELT (Python) | `src/python/` | `extract.py`, `ingest.py`, `xbrl_populate.py`, `insider_load.py`, `shareholding_load.py`, `screens.py`, `screener_company.py`, `screener_search.py`, `rupeevest_*.py` |
+| ELT — daily | `src/python/` | `extract.py`, `ingest.py` |
+| ELT — on refresh | `src/python/` | `insider_load.py`, `shareholding_load.py`, `livemint_snapshot.py` (all → `data/store/`, decoupled from the daily cycle) |
+| ELT — other | `src/python/` | `xbrl_populate.py` (legacy per-day shred + `fetch`/`shred` helpers), `screens.py`, `screener_company.py`, `screener_search.py`, `rupeevest_*.py` |
 | API (Node, ESM) | `src/nodejs/src/` | `server.js` (routes), `db.js` (**DuckDB base views**), `screens.js`, `companies.js`, `corporate.js`, `news.js`, `firms.js`, `hunt.js`, `screener.js` |
 | UI (Next.js) | `src/nextjs/` | **submodule** → hunt-internal (see [05](05-frontend.md)) |
 

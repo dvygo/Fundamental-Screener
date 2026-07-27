@@ -7,12 +7,23 @@ Full rationale: [storage.md](storage.md).
 | Path | What | Committed? |
 |---|---|---|
 | `data/extracts/<YYYYMMDD>/` | day-partitioned market data (bhavcopy, 52w, circuit, corp actions) | no (gitignored, re-fetchable) |
-| `data/store/` | **consolidated** single-file filing stores — `insider.parquet`, `shareholding.parquet` (whole history, not day-partitioned) | no (derived) |
+| `data/store/` | **consolidated** single-file stores — `insider.parquet`, `shareholding.parquet`, `news.parquet` (whole history, not day-partitioned) | no (derived) |
 | `data/companies/` | parsed dossiers | yes |
 | `data/raw/` | cached scrape HTML + downloaded index CSVs / XBRL cache | **no — never commit** |
 | `data/backup/<YYYYMMDD>/` | DR mirror of what went to MinIO | manifest only |
 
 The DuckDB views in `db.js` glob `data/extracts` and `data/store` directly.
+
+**The two write on different clocks.** `data/extracts/` fills per BOD drop;
+`data/store/` fills when a source index CSV is re-downloaded (filings) or once a
+day (news). Neither obliges the other — see the cadence table in
+[../CLAUDE.md](../CLAUDE.md).
+
+Derived is not the same as re-derivable. `data/extracts/` rebuilds from the raw
+zips offline; `insider.parquet` / `shareholding.parquet` rebuild from their index
+CSV plus the cached XBRL. `news.parquet` cannot be rebuilt past the ~week
+LiveMint exposes — its raw snapshots are the only copy, and both they and the
+store are gitignored, so `data_sync.py` push is the sole preservation path.
 
 ## v2 — MinIO lake (built, currently deferred)
 

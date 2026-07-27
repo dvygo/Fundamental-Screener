@@ -64,9 +64,21 @@ v1 reads local disk (`data/extracts`, `data/store`). v2 flips the DuckDB globs t
 `raw/` bucket makes the source drops tamper-evident. See
 [storage.md](storage.md).
 
-## Known data-coverage caveat
+## Data coverage
 
-Only a handful of daily bhavcopies are loaded, while the insider store spans
-~2 months. Price-derived signals (52w, gainers, losers) therefore reflect the
-loaded sessions; they extend toward a full 21 as more dailies land. HUNT's window
-is a session-equivalent calendar span so the richer feeds aren't starved.
+A backfill on 2026-07-27 brought `data/extracts/` to **54 trading sessions**
+(`2026-05-08` → `2026-07-24`, 78 date folders, 162k EQ rows), so price-derived
+signals (52w, gainers, losers) now cover well over a full rolling window rather
+than a handful of days. HUNT's window stays a session-equivalent calendar span
+so the richer feeds aren't starved.
+
+Two things to know about that data:
+
+- On non-trading days the BOD drop **re-ships the previous session's bhavcopy**
+  under the new date's filename — 67 bhavcopy files resolve to only 54 distinct
+  sessions. `prices` keys on the row's `DATE1`, not the folder, so the repeats
+  land as duplicate rows on an already-loaded session. The screens absorb it with
+  `SELECT DISTINCT as_of, symbol, pct_change` before ranking — preserve that in
+  any rewrite or gainer/loser recurrence will double-count.
+- News history begins 2026-07-27 and only grows forward; LiveMint has no archive
+  to backfill from.

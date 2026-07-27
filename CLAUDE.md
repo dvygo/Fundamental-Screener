@@ -37,11 +37,35 @@ New-agent onboarding — **follow in order, don't skip**:
 - `data/bod/` — **raw manual drops** (NSE/BSE bhavcopies, daily reports) — the pre-processing inbox (committed)
 - `data/backup/YYYYMMDD/` — mirror of every processed file also written to MinIO (committed; DR)
 - `data/raw/` — cached scrape HTML + downloaded index CSVs / XBRL cache (gitignored; re-fetchable)
-- `data/store/` — **consolidated single-file filing store** (gitignored; derived). Quarterly/event
+- `data/store/` — **consolidated single-file store** (gitignored; derived). Quarterly/event
   filing data is NOT day-partitioned: `shareholding.parquet` (promoter/public % per symbol per
-  quarter, whole history, from the NSE shareholding index via `src/python/shareholding_load.py`) and
-  `insider.parquet` (lossless insider XBRL shred via `src/python/insider_load.py`). Daily *market*
+  quarter, whole history, from the NSE shareholding index via `src/python/shareholding_load.py`),
+  `insider.parquet` (lossless insider XBRL shred via `src/python/insider_load.py`) and
+  `news.parquet` (LiveMint history via `src/python/livemint_snapshot.py`). Daily *market*
   data (bhavcopy, 52w, circuit, corp actions) stays day-partitioned under `data/extracts/`.
+  `shareholding_facts.parquet` is also read by the API but no loader in `src/python/` writes it.
+
+## Two cadences — don't couple them
+
+The pipeline has two independent clocks. Confusing them is the easiest way to
+either corrupt a screen or waste an hour re-running something that didn't need it.
+
+| | **Daily** (market) | **On refresh** (filings + news) |
+|---|---|---|
+| Trigger | a new BOD drop lands in `data/raw/zip/` | the source index CSV is re-downloaded; news runs once a day |
+| Scripts | `extract.py` → `ingest.py` | `insider_load.py`, `shareholding_load.py`, `livemint_snapshot.py` |
+| Input | one zip per date, date in the filename | one broad CSV in `data/raw/` spanning years (2020→today) |
+| Output | `data/extracts/<YYYYMMDD>/` | one consolidated file in `data/store/` |
+| Miss a run? | that session is gone — the drop is not re-requestable | harmless for filings (re-read the same CSV); **fatal for news** (LiveMint's window is ~a week) |
+
+The filing loaders are **decoupled from the daily cycle** — they read a single
+index CSV covering the whole history, not a day's folder, so running `extract.py`
+does not oblige you to run them, and re-running them does not need fresh dailies.
+
+`xbrl_populate.py` is the exception: it is the older *per-day* path
+(`data/extracts/<date>/CF-*.csv` → a `.parquet` beside it) and is still imported
+by `insider_load.py` for its `fetch`/`shred` helpers. Reach for it only when you
+want a specific day's facts; the store loaders are the current route.
 
 Storage tiering (disk → MinIO, services read MinIO only): see `context/storage.md`.
 
@@ -51,6 +75,10 @@ Storage tiering (disk → MinIO, services read MinIO only): see `context/storage
 pip install -r setup/requirements.txt
 playwright install chromium                 # only if a scraper needs the browser
 python src/python/screener_company.py RELIANCE TCS INFY
+python src/python/extract.py                 # daily: raw zips -> data/extracts/<date>/
+python src/python/livemint_snapshot.py       # daily: LiveMint sitemaps -> data/store/news.parquet
+python src/python/insider_load.py            # on refresh of the index CSV
+python src/python/shareholding_load.py       # on refresh of the index CSV
 node src/nodejs/src/server.js                # REST API on :3000
 # frontend (submodule): cd src/nextjs && npm install && npm run dev   # :3001
 ```

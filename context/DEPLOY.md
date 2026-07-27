@@ -33,9 +33,19 @@ git submodule update --init src/nextjs
 docker compose -f docker/docker-compose.yml up -d
 #    creates raw/ (object-locked, versioned, COMPLIANCE retention) + delta/
 
-# 2. ELT — land + shred (examples; see src/python/)
+# 2. ELT — two independent cadences, NOT one sequence (see CLAUDE.md)
 source .venv/bin/activate
+
+#  2a. daily — runs when a new BOD drop lands in data/raw/zip/
+python src/python/extract.py           # decompress -> data/extracts/<YYYYMMDD>/
 python src/python/ingest.py            # pull/stage daily bundles
+
+#  2b. daily — news; a missed day is unrecoverable (LiveMint keeps ~a week)
+python src/python/livemint_snapshot.py # sitemaps -> data/store/news.parquet
+
+#  2c. on refresh only — driven by the index CSV in data/raw/, not by a drop.
+#      Each reads one file spanning 2020->today, so a new daily neither
+#      requires nor benefits from re-running these.
 python src/python/insider_load.py      # NSE PIT XBRL → data/store/insider.parquet
 python src/python/shareholding_load.py # shareholding index → shareholding.parquet
 
