@@ -36,7 +36,7 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("split_filings")
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 EXTRACTS = ROOT / "data" / "extracts"
 
 # (filename match, date-column fragment, output stem)

@@ -11,11 +11,23 @@ data/raw/
 
 # Decompressed working root (process UNO, src/extract.py) — derived from the raw
 # drop, rebuildable, feeds MinIO. Not committed.
-data/extracts/
+data/extracts/*
+# Exception: the SEBI wealth-manager firm list is an external input sourced from
+# the sibling Fund-Manager-Web-Scraper repo (no local ELT regenerates it), so it
+# IS committed to keep the Firms tab self-contained.
+!data/extracts/sebi/
+data/extracts/sebi/*
+!data/extracts/sebi/wealth_managers.csv
 
 # XBRL facts — lossless per-day Parquet, rebuildable from data/extracts + the
 # XML cache (src/xbrl_populate.py). Queried directly (DuckDB glob); MinIO is v2.
 data/facts/
+
+# Consolidated single-file filing store — the permanent shape for quarterly/event
+# filing data (promoter holding + insider). Derived: shareholding.parquet rebuilds
+# in seconds from the index CSV (shareholding_load.py), insider.parquet re-shreds
+# from the XML cache (insider_load.py). Queried directly by the API; MinIO is v2.
+data/store/
 
 # Generated NSE bulk-download links (regeneratable from src/nse_report_links.py).
 data/nse_links/
@@ -31,8 +43,25 @@ data/backup/**
 docker/.env
 *.original.md
 
+# Google Cloud service-account key(s) — rclone → Drive sync (src/python/data_sync.py).
+# NEVER commit; the key is copied to each server's root manually.
+/fundamental-screener-*.json
+*service-account*.json
+*.serviceaccount.json
+# rclone config + local sync settings (may embed the key path / shared-drive id)
+/rclone.conf
+/.data-sync.env
+# Local tar.gz build staging for data_sync.py push (rebuilt each run).
+/.snapshots/
+
 # Crawl4AI / Playwright caches
 .crawl4ai/
+
+# Node.js (src/nodejs API, src/nextjs frontend) — deps + build output, rebuildable
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
 
 # OS / editor
 .DS_Store

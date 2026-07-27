@@ -28,7 +28,7 @@ from bs4 import BeautifulSoup
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("rupeevest_pull")
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 OUT_DIR = ROOT / "data" / "raw" / "rupeevest"
 
 BASE_URL = "https://www.rupeevest.com"

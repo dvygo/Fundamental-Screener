@@ -61,7 +61,7 @@ from lxml import etree
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("xbrl_populate")
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 EXTRACTS = ROOT / "data" / "extracts"
 XML_CACHE = ROOT / "data" / "raw" / "xbrl"
 

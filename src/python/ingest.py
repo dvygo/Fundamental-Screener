@@ -40,7 +40,7 @@ from minio.error import S3Error
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("ingest")
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 # Pipeline reads the decompressed working root (process UNO = src/extract.py),
 # never the pristine raw drop.
 EXTRACTS = ROOT / "data" / "extracts"

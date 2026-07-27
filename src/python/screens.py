@@ -31,7 +31,7 @@ from pathlib import Path
 
 import duckdb
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 EXTRACTS = ROOT / "data" / "extracts"
 
 
@@ -48,6 +48,8 @@ _D = "try_strptime({0}, '%d-%b-%Y')::date"
 def _base_views(con):
     bhav = f"{EXTRACTS.as_posix()}/*/sec_bhavdata_full*.csv"
     wk = f"{EXTRACTS.as_posix()}/*/CM_52_wk_High_low*.csv"
+    sec = f"{EXTRACTS.as_posix()}/*/NSE_CM_security_*.csv"
+    bh = f"{EXTRACTS.as_posix()}/*/bh*.csv"
 
     # daily EQ prices, one row per (symbol, session)
     con.execute(f"""
@@ -74,7 +76,7 @@ def _base_views(con):
              TRY_CAST(replace(adjusted_52_week_high, ' ', '') AS DOUBLE) AS price
       FROM read_csv('{wk}', header=true, all_varchar=true, normalize_names=true,
                     skip=2, union_by_name=true)
-      WHERE {_D.format('_52_week_high_date')} IS NOT NULL
+      WHERE {_D.format('_52_week_high_date')} IS NOT NULL AND trim(series) = 'EQ'
     """)
     con.execute(f"""
       CREATE OR REPLACE VIEW lo52 AS
@@ -83,7 +85,35 @@ def _base_views(con):
              TRY_CAST(replace(adjusted_52_week_low, ' ', '') AS DOUBLE) AS price
       FROM read_csv('{wk}', header=true, all_varchar=true, normalize_names=true,
                     skip=2, union_by_name=true)
-      WHERE {_D.format('_52_week_low_dt')} IS NOT NULL
+      WHERE {_D.format('_52_week_low_dt')} IS NOT NULL AND trim(series) = 'EQ'
+    """)
+
+    # official company name per symbol (NSE security master), exact FinInstrmNm
+    # string as-is. Not every symbol has an EQ row (SME board symbols only ever
+    # list under SM/SL/SQ/ST) so this doesn't filter by series - just picks the
+    # most recent date folder's row per symbol (name is the same across series).
+    con.execute(f"""
+      CREATE OR REPLACE VIEW security AS
+      SELECT symbol, company_name FROM (
+        SELECT trim(tckrsymb) AS symbol, trim(fininstrmnm) AS company_name,
+               row_number() OVER (PARTITION BY trim(tckrsymb) ORDER BY filename DESC, sctysrs) AS rn
+        FROM read_csv('{sec}', header=true, all_varchar=true, normalize_names=true,
+                      filename=true, union_by_name=true)
+      ) WHERE rn = 1
+    """)
+
+    # upper/lower circuit hitters - real NSE data, not a heuristic: bh<date>.csv
+    # ("securities which have hit their price bands during the day", per NSE's
+    # own readme.txt shipped in the daily PR bundle). H = upper, L = lower.
+    # No date column in the file itself - as_of comes from the YYYYMMDD extracts
+    # folder embedded in the file's own path.
+    con.execute(f"""
+      CREATE OR REPLACE VIEW circuit AS
+      SELECT strptime(regexp_extract(filename, '/(\\d{{8}})/[^/]+$', 1), '%Y%m%d')::date AS as_of,
+             trim(symbol) AS symbol, trim(series) AS series, trim(highlow) AS hit
+      FROM read_csv('{bh}', header=true, all_varchar=true, normalize_names=true,
+                    filename=true, union_by_name=true)
+      WHERE trim(series) = 'EQ'
     """)
 
 
@@ -108,58 +138,72 @@ def _show(con, title, sql):
 def screen1(con, **_):
     _show(con, "1 - 52-week HIGH trigger - last session", """
       WITH d AS (SELECT max(event_date) md FROM hi52)
-      SELECT event_date, symbol, series, price
-      FROM hi52, d WHERE event_date = d.md
-      ORDER BY symbol
+      SELECT h.event_date, h.symbol, s.company_name, h.series, h.price
+      FROM hi52 h
+      CROSS JOIN d
+      LEFT JOIN security s ON s.symbol = h.symbol
+      WHERE h.event_date = d.md
+      ORDER BY h.symbol
     """)
 
 
 def screen2(con, n, **_):
     _show(con, f"2 - 52-week HIGH - events in last {n} days (per symbol)", f"""
       WITH d AS (SELECT max(event_date) md FROM hi52)
-      SELECT symbol,
-             count(DISTINCT event_date) AS high_events,
-             min(event_date) AS first_event, max(event_date) AS last_event
-      FROM hi52, d
-      WHERE event_date > d.md - INTERVAL {n} DAY
-      GROUP BY symbol
-      ORDER BY high_events DESC, symbol
+      SELECT h.symbol, s.company_name,
+             count(DISTINCT h.event_date) AS high_events,
+             min(h.event_date) AS first_event, max(h.event_date) AS last_event
+      FROM hi52 h
+      CROSS JOIN d
+      LEFT JOIN security s ON s.symbol = h.symbol
+      WHERE h.event_date > d.md - INTERVAL {n} DAY
+      GROUP BY h.symbol, s.company_name
+      ORDER BY high_events DESC, h.symbol
     """)
 
 
 def screen3(con, n, **_):
     _show(con, "3a - 52-week LOW trigger - last session", """
       WITH d AS (SELECT max(event_date) md FROM lo52)
-      SELECT event_date, symbol, series, price
-      FROM lo52, d WHERE event_date = d.md
-      ORDER BY symbol
+      SELECT l.event_date, l.symbol, s.company_name, l.series, l.price
+      FROM lo52 l
+      CROSS JOIN d
+      LEFT JOIN security s ON s.symbol = l.symbol
+      WHERE l.event_date = d.md
+      ORDER BY l.symbol
     """)
     _show(con, f"3b - 52-week LOW - events in last {n} days (per symbol)", f"""
       WITH d AS (SELECT max(event_date) md FROM lo52)
-      SELECT symbol,
-             count(DISTINCT event_date) AS low_events,
-             min(event_date) AS first_event, max(event_date) AS last_event
-      FROM lo52, d
-      WHERE event_date > d.md - INTERVAL {n} DAY
-      GROUP BY symbol
-      ORDER BY low_events DESC, symbol
+      SELECT l.symbol, s.company_name,
+             count(DISTINCT l.event_date) AS low_events,
+             min(l.event_date) AS first_event, max(l.event_date) AS last_event
+      FROM lo52 l
+      CROSS JOIN d
+      LEFT JOIN security s ON s.symbol = l.symbol
+      WHERE l.event_date > d.md - INTERVAL {n} DAY
+      GROUP BY l.symbol, s.company_name
+      ORDER BY low_events DESC, l.symbol
     """)
 
 
 def screen4(con, top, **_):
     _show(con, f"4a - Top {top} GAINERS - last session", f"""
       WITH d AS (SELECT max(as_of) md FROM prices)
-      SELECT symbol, close, prev_close, pct_change, qty, turnover_lacs
-      FROM prices, d
-      WHERE as_of = d.md AND pct_change IS NOT NULL
-      ORDER BY pct_change DESC LIMIT {top}
+      SELECT p.symbol, s.company_name, p.close, p.prev_close, p.pct_change, p.qty, p.turnover_lacs
+      FROM prices p
+      CROSS JOIN d
+      LEFT JOIN security s ON s.symbol = p.symbol
+      WHERE p.as_of = d.md AND p.pct_change IS NOT NULL
+      ORDER BY p.pct_change DESC LIMIT {top}
     """)
     _show(con, f"4b - Top {top} LOSERS - last session", f"""
       WITH d AS (SELECT max(as_of) md FROM prices)
-      SELECT symbol, close, prev_close, pct_change, qty, turnover_lacs
-      FROM prices, d
-      WHERE as_of = d.md AND pct_change IS NOT NULL
-      ORDER BY pct_change ASC LIMIT {top}
+      SELECT p.symbol, s.company_name, p.close, p.prev_close, p.pct_change, p.qty, p.turnover_lacs
+      FROM prices p
+      CROSS JOIN d
+      LEFT JOIN security s ON s.symbol = p.symbol
+      WHERE p.as_of = d.md AND p.pct_change IS NOT NULL
+      ORDER BY p.pct_change ASC LIMIT {top}
     """)
 
 
@@ -172,21 +216,44 @@ def screen5(con, n, top, **_):
         FROM prices, d
         WHERE pct_change IS NOT NULL AND as_of > d.md - INTERVAL {n} DAY
       )
-      SELECT symbol,
+      SELECT r.symbol, s.company_name,
              count(*) AS times_in_top,
-             round(avg(pct_change), 2) AS avg_pct,
-             max(as_of) AS last_seen
-      FROM ranked WHERE rnk <= {top}
-      GROUP BY symbol
+             round(avg(r.pct_change), 2) AS avg_pct,
+             max(r.as_of) AS last_seen
+      FROM ranked r
+      LEFT JOIN security s ON s.symbol = r.symbol
+      WHERE r.rnk <= {top}
+      GROUP BY r.symbol, s.company_name
       ORDER BY times_in_top DESC, avg_pct DESC
     """)
 
 
-SCREENS = {1: screen1, 2: screen2, 3: screen3, 4: screen4, 5: screen5}
+def screen6(con, **_):
+    _show(con, "6a - UPPER circuit - last session", """
+      WITH d AS (SELECT max(as_of) md FROM circuit)
+      SELECT c.as_of, c.symbol, s.company_name, c.series
+      FROM circuit c
+      CROSS JOIN d
+      LEFT JOIN security s ON s.symbol = c.symbol
+      WHERE c.as_of = d.md AND c.hit = 'H'
+      ORDER BY c.symbol
+    """)
+    _show(con, "6b - LOWER circuit - last session", """
+      WITH d AS (SELECT max(as_of) md FROM circuit)
+      SELECT c.as_of, c.symbol, s.company_name, c.series
+      FROM circuit c
+      CROSS JOIN d
+      LEFT JOIN security s ON s.symbol = c.symbol
+      WHERE c.as_of = d.md AND c.hit = 'L'
+      ORDER BY c.symbol
+    """)
+
+
+SCREENS = {1: screen1, 2: screen2, 3: screen3, 4: screen4, 5: screen5, 6: screen6}
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Layer A screens over MinIO bhavcopy")
-    ap.add_argument("screen", help="1-5 or 'all'")
+    ap.add_argument("screen", help="1-6 or 'all'")
     ap.add_argument("--n", type=int, default=30, help="N-day window (screens 2,3,5)")
     ap.add_argument("--top", type=int, default=20, help="depth (screens 4,5)")
     args = ap.parse_args()

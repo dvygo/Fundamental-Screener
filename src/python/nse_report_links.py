@@ -30,7 +30,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 BASE = "https://www.nseindia.com/api/reports"
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 LINKS_DIR = ROOT / "data" / "nse_links"
 OPEN_DELAY = 5.0  # seconds between browser opens, so downloads don't collide
 
