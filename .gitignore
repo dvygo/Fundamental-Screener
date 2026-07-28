@@ -43,6 +43,13 @@ data/backup/**
 docker/.env
 *.original.md
 
+# TLS material for the API's HTTPS listener. The PRIVATE KEY must never be
+# committed — it is what proves the server is ours to the Vercel proxy that
+# pins it. The certificate is public and safe to share, but the whole directory
+# is ignored so a stray key can't slip in; regenerate with
+# src/nodejs/certs/openssl.cnf if a fresh box needs one.
+src/nodejs/certs/
+
 # Google Cloud service-account key(s) — rclone → Drive sync (src/python/data_sync.py).
 # NEVER commit; the key is copied to each server's root manually.
 /fundamental-screener-*.json

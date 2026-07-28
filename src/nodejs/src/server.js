@@ -5,6 +5,8 @@
 
 import process from 'node:process';
 import path from 'node:path';
+import fs from 'node:fs/promises';
+import https from 'node:https';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 
@@ -285,5 +287,35 @@ app.get('/api/insider/recent', route((req, res) => {
 }));
 
 app.listen(PORT, () => {
-  console.log(`Fundamental-Screener API listening on :${PORT}`);
+  console.log(`Fundamental-Screener API listening on :${PORT} (http)`);
 });
+
+// Optional HTTPS listener, for the hop between the Vercel proxy and this box.
+//
+// That hop currently crosses the public internet in plaintext: readable by
+// anyone on the path, with nothing proving this server is ours. A domain plus a
+// public CA is the textbook fix, but there is no domain here — so the cert is
+// self-signed with the public IP in its subjectAltName, and the Vercel proxy
+// PINS it (undici Agent with `ca: [thisCert]`). Trusting exactly one certificate
+// is stronger than trusting every public CA, not weaker; what it costs is that
+// rotating the cert means updating the Vercel env var too.
+//
+// Browsers will not trust it, which does not matter: since the proxy landed, no
+// browser talks to this API directly. Anything that did would still need a real
+// certificate.
+//
+// Starts only when both files are present, so a box without certs boots plain
+// HTTP exactly as before rather than failing.
+const TLS_PORT = Number(process.env.API_TLS_PORT) || 4443;
+const CERT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'certs');
+try {
+  const [key, cert] = await Promise.all([
+    fs.readFile(path.join(CERT_DIR, 'api-key.pem')),
+    fs.readFile(path.join(CERT_DIR, 'api-cert.pem')),
+  ]);
+  https.createServer({ key, cert }, app).listen(TLS_PORT, () => {
+    console.log(`Fundamental-Screener API listening on :${TLS_PORT} (https, self-signed)`);
+  });
+} catch {
+  console.log(`No certs in ${CERT_DIR} — HTTPS listener not started (http only)`);
+}
