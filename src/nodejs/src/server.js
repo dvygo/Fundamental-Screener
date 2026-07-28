@@ -52,14 +52,48 @@ const app = express();
 // those are "simple" requests and skip preflight, but the moment anything sends
 // a custom header the browser preflights first, and an unhandled OPTIONS would
 // fall through to the 404 handler and fail the real request with it.
-const ALLOW_ORIGIN = process.env.API_ALLOW_ORIGIN || '*';
+// API_ALLOW_ORIGIN is either '*' or a comma-separated allowlist. Entries may be
+// exact origins ('https://hunter-hazel-gamma.vercel.app') or carry a single
+// wildcard ('https://*.vercel.app').
+//
+// The wildcard matters because Vercel mints a NEW origin for every deployment
+// (hunter-<hash>-<team>.vercel.app), so an exact-only list breaks on the next
+// deploy. Know what it costs: 'https://*.vercel.app' trusts every site hosted on
+// vercel.app, not just ours. Narrow it to the stable domain once there's a
+// custom one.
+const ALLOW_ORIGIN = (process.env.API_ALLOW_ORIGIN || '*').trim();
+const ALLOW_LIST = ALLOW_ORIGIN === '*'
+  ? null
+  : ALLOW_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean);
+
+function originAllowed(origin) {
+  if (!origin || !ALLOW_LIST) return false;
+  return ALLOW_LIST.some((entry) => {
+    const star = entry.indexOf('*');
+    if (star === -1) return entry === origin;
+    const prefix = entry.slice(0, star);
+    const suffix = entry.slice(star + 1);
+    // Length guard stops 'https://.vercel.app' matching 'https://*.vercel.app'.
+    return origin.startsWith(prefix) && origin.endsWith(suffix) && origin.length > entry.length - 1;
+  });
+}
+
 app.use((req, res, next) => {
-  res.set('Access-Control-Allow-Origin', ALLOW_ORIGIN);
+  const origin = req.get('Origin');
+  if (!ALLOW_LIST) {
+    res.set('Access-Control-Allow-Origin', '*');
+  } else if (originAllowed(origin)) {
+    // Echo the caller's own origin — this header cannot carry a list, so
+    // echoing a verified origin is the only way an allowlist works.
+    res.set('Access-Control-Allow-Origin', origin);
+  }
+  // Otherwise no ACAO header at all, and the browser blocks the read. That is
+  // the intended outcome, not an error worth reporting.
   res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
   // Echo what was asked for rather than guessing a fixed list.
   res.set('Access-Control-Allow-Headers', req.get('Access-Control-Request-Headers') || 'Content-Type');
   res.set('Access-Control-Max-Age', '86400'); // cache preflight for a day
-  if (ALLOW_ORIGIN !== '*') res.set('Vary', 'Origin'); // don't let a proxy pin one origin's answer
+  if (ALLOW_LIST) res.set('Vary', 'Origin'); // response now varies by caller; don't let a proxy pin one
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
