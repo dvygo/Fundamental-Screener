@@ -52,6 +52,39 @@ const app = express();
 // those are "simple" requests and skip preflight, but the moment anything sends
 // a custom header the browser preflights first, and an unhandled OPTIONS would
 // fall through to the 404 handler and fail the real request with it.
+// One line per request, written when the response finishes so the status and
+// duration are real rather than guessed. Exists because the API previously
+// logged only errors: a request that succeeded and one that never arrived
+// produced identical silence, which made "did my phone reach the API?"
+// unanswerable. Now the absence of a line is itself the answer.
+//
+// Registered BEFORE the CORS middleware on purpose. That one answers OPTIONS
+// with 204 and returns, so a logger placed after it never sees a preflight —
+// and a failing preflight is exactly what you want visible when a browser is
+// silently refusing to call the API.
+//
+// Origin and IP are logged because the interesting failures are remote: a
+// blocked origin, or a caller from an address you did not expect. API_LOG=0
+// silences it.
+//
+// Note: req.ip is the socket peer. Behind a reverse proxy (the planned TLS
+// terminator on 443) every line would read as the proxy's address until
+// `app.set('trust proxy', …)` is configured to match that hop.
+const LOG_REQUESTS = process.env.API_LOG !== '0';
+app.use((req, res, next) => {
+  if (!LOG_REQUESTS) return next();
+  const started = process.hrtime.bigint();
+  res.on('finish', () => {
+    const ms = Number(process.hrtime.bigint() - started) / 1e6;
+    const origin = req.get('Origin') || '-';
+    const ip = req.ip || req.socket.remoteAddress || '-';
+    console.log(
+      `${new Date().toISOString()} ${req.method} ${req.originalUrl} ${res.statusCode} ${ms.toFixed(0)}ms origin=${origin} ip=${ip}`,
+    );
+  });
+  next();
+});
+
 // API_ALLOW_ORIGIN is either '*' or a comma-separated allowlist. Entries may be
 // exact origins ('https://hunter-hazel-gamma.vercel.app') or carry a single
 // wildcard ('https://*.vercel.app').
