@@ -38,9 +38,29 @@ import { listFundManagers, listFirms, firmSearch } from './firms.js';
 const PORT = process.env.PORT || 3000;
 const app = express();
 
-// Local dev only: frontend (src/nextjs) runs on a different port.
+// CORS. The frontend is deployed separately (Vercel) while this API runs on our
+// own box, so every browser call is cross-origin — not just the local dev case
+// of a second port.
+//
+// Open by design: `*` means any origin may call this. That is deliberate for
+// now, but it also means the whole dataset is readable by anyone who finds the
+// host. Narrow ALLOW_ORIGIN to the deployment origin when that stops being
+// acceptable; `*` and credentials are mutually exclusive anyway, so this only
+// stays workable while there is no auth.
+//
+// Answering OPTIONS matters even though today's requests are all plain GETs:
+// those are "simple" requests and skip preflight, but the moment anything sends
+// a custom header the browser preflights first, and an unhandled OPTIONS would
+// fall through to the 404 handler and fail the real request with it.
+const ALLOW_ORIGIN = process.env.API_ALLOW_ORIGIN || '*';
 app.use((req, res, next) => {
-  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Origin', ALLOW_ORIGIN);
+  res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  // Echo what was asked for rather than guessing a fixed list.
+  res.set('Access-Control-Allow-Headers', req.get('Access-Control-Request-Headers') || 'Content-Type');
+  res.set('Access-Control-Max-Age', '86400'); // cache preflight for a day
+  if (ALLOW_ORIGIN !== '*') res.set('Vary', 'Origin'); // don't let a proxy pin one origin's answer
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
 
