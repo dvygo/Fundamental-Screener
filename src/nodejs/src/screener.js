@@ -62,6 +62,11 @@ async function fetchHtml(symbol) {
   } catch {
     /* not cached - fetch live below */
   }
+  // Plain /company/<symbol>/ is screener's STANDALONE view; the consolidated
+  // figures live at /company/<symbol>/consolidated/. The distinction is not
+  // cosmetic — for a holding-heavy group the two P/Es differ by ~2x (RELIANCE
+  // 44 standalone vs ~20 consolidated), so the UI labels this source
+  // explicitly. Changing this URL silently changes what every ratio means.
   const resp = await pacedFetch(`${BASE}/company/${symbol}/`);
   if (resp.status === 404) return null; // no such company - definitive, don't retry
   if (!resp.ok) throw new Error(`screener ${resp.status} for ${symbol}`); // transient -> caller retries

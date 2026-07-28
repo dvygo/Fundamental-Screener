@@ -149,18 +149,37 @@ const DII_DIM = '{"in-bse-shp:CategoryOfShareholdersAxis": "in-bse-shp:Instituti
 // market cap, price, high/low, P/E, EPS, promoter/FII/DII changes, public
 // holding, 3yr promoter change). Falls back to the NSE-daily + XBRL metrics
 // below only when a symbol has no screener page (or the scrape is blocked).
+// NSE's own two P/E figures for a symbol, attached to the drilldown whichever
+// source wins. They answer a different question from screener's `stock_pe`:
+// screener computes its own (usually consolidated) TTM ratio, while these come
+// straight off the daily PE file — `nse_pe` as published, `nse_adjusted_pe`
+// restated for bonus/split/rights. All three can legitimately disagree
+// (RELIANCE 44 vs 20.25 vs 20.25; THERMAX 110 vs 71.33 vs 75.95), so the UI
+// shows them side by side instead of one unlabelled number whose meaning
+// silently depends on whether the screener scrape happened to succeed.
+async function nsePeRow(symbol) {
+  const rows = await queryJson(
+    'SELECT symbol_pe AS nse_pe, adjusted_pe AS nse_adjusted_pe FROM pe_latest WHERE symbol = ?',
+    [symbol],
+  );
+  return rows[0] ?? { nse_pe: null, nse_adjusted_pe: null };
+}
+
 export async function companyDrilldown(symbol) {
   // screener is primary; a transient screener failure falls back to our own
   // NSE-daily + XBRL metrics rather than erroring (drilldown data is always
   // available from one source or the other).
+  const pe = await nsePeRow(symbol);
   try {
     const screener = await screenerDrilldown(symbol);
-    if (screener) return screener;
+    if (screener) return { ...screener, ...pe };
   } catch {
     /* fall through to NSE own-data */
   }
   const nse = await nseDrilldown(symbol);
-  return nse ? { ...nse, high: null, low: null, promoter_change_3yr: null, public_pct: null, source: 'nse' } : null;
+  return nse
+    ? { ...nse, ...pe, high: null, low: null, promoter_change_3yr: null, public_pct: null, source: 'nse' }
+    : null;
 }
 
 async function nseDrilldown(symbol) {

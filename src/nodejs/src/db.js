@@ -290,8 +290,13 @@ async function createConnection() {
   `);
   await connection.run(`
     CREATE OR REPLACE VIEW pe_latest AS
-    SELECT symbol, symbol_pe FROM (
+    SELECT symbol, symbol_pe, adjusted_pe FROM (
       SELECT trim(symbol) AS symbol, TRY_CAST(symbol_pe AS DOUBLE) AS symbol_pe,
+             -- PE_<date>.csv ships BOTH figures and they diverge after a bonus,
+             -- split or rights (THERMAX 71.33 vs 75.95). Only symbol_pe used to
+             -- be read, so the adjusted one was invisible; carry both and let
+             -- the drilldown show them side by side rather than pick silently.
+             TRY_CAST(adjusted_pe AS DOUBLE) AS adjusted_pe,
              row_number() OVER (PARTITION BY trim(symbol)
                ORDER BY ${FOLDER_DATE()} DESC) AS rn
       FROM read_csv('${peCsv}', header=true, all_varchar=true, normalize_names=true,
