@@ -69,6 +69,9 @@ node_modules/
 .next/
 next-env.d.ts
 *.tsbuildinfo
+# API bundle from `npm run build` (src/nodejs/build.js). Regenerate, never commit —
+# a stale checked-in bundle would silently run instead of the edited src/.
+src/nodejs/dist/
 
 # OS / editor
 .DS_Store

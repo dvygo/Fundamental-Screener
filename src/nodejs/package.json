@@ -4,6 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "build": "node build.js",
+    "start": "node dist/server.js",
+    "dev": "node src/server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -14,5 +17,8 @@
     "@duckdb/node-api": "^1.5.5-r.1",
     "cheerio": "^1.2.0",
     "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
   }
 }
