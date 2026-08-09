@@ -33,6 +33,7 @@ import {
 } from './screens.js';
 import { searchCompanies, companyInsider, companyShareholding, companyDrilldown, companyPromoters, listSeries, insiderRecent } from './companies.js';
 import { corporateActions } from './corporate.js';
+import { usHigh52wEvents, usLow52wEvents, usGainersRecurrence, usLosersRecurrence } from './screens_us.js';
 import { getNews, getSitemapNews } from './news.js';
 import { huntBoard } from './hunt.js';
 import { listFundManagers, listFirms, firmSearch } from './firms.js';
@@ -184,6 +185,35 @@ app.get('/api/screens/52w-low/events', route((req, res) => {
   const n = intParam(req, res, 'n', 30);
   if (n === null) return null;
   return screen3b_low52wEvents(n);
+}));
+
+// Markets US — S&P 500 via Yahoo (src/python/us_market_pull.py). Namespaced
+// under /api/us/ so the NSE routes keep their paths and nothing existing moves.
+// Four screens only: circuit has no US equivalent (see screens_us.js).
+app.get('/api/us/screens/52w-high', route((req, res) => {
+  const n = intParam(req, res, 'n', 30);
+  if (n === null) return null;
+  return usHigh52wEvents(n);
+}));
+
+app.get('/api/us/screens/52w-low', route((req, res) => {
+  const n = intParam(req, res, 'n', 30);
+  if (n === null) return null;
+  return usLow52wEvents(n);
+}));
+
+app.get('/api/us/screens/gainers/recurrence', route((req, res) => {
+  const n = intParam(req, res, 'n', 30);
+  const top = intParam(req, res, 'top', 20);
+  if (n === null || top === null) return null;
+  return usGainersRecurrence(n, top);
+}));
+
+app.get('/api/us/screens/losers/recurrence', route((req, res) => {
+  const n = intParam(req, res, 'n', 30);
+  const top = intParam(req, res, 'top', 20);
+  if (n === null || top === null) return null;
+  return usLosersRecurrence(n, top);
 }));
 
 app.get('/api/screens/gainers', route((req, res) => {
