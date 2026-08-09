@@ -45,6 +45,35 @@ New-agent onboarding — **follow in order, don't skip**:
   data (bhavcopy, 52w, circuit, corp actions) stays day-partitioned under `data/extracts/`.
   `shareholding_facts.parquet` is also read by the API but no loader in `src/python/` writes it.
 
+## US market (Markets US / Insider Centric US)
+
+A second board covering US equities, alongside the Indian one. The sidebar's
+market dropdown decides which tabs are on offer; the server dropdown separately
+decides which API answers them.
+
+| | source | loader | lands in |
+|---|---|---|---|
+| Prices | Yahoo (yfinance), S&P 500 only | `us_market_pull.py bars` | `data/extracts_us/<YYYYMMDD>/` |
+| Fundamentals | Yahoo `.info`, lossless long table | `us_market_pull.py info` | `data/extracts_us/_meta/` |
+| Insider filings | SEC Forms 3/4/5 quarterly data sets | `sec_insider_pull.py` | `data/extracts_sec/<YYYYqN>/` |
+
+Both are gitignored and fully re-fetchable — unlike the NSE drop, a missed day
+is never lost, since Yahoo and the SEC both serve history.
+
+**Markets US has four screens, not five.** Upper & Lower Circuit has no US
+equivalent: per-stock daily price bands are structural to Indian exchanges,
+while US halts are intraday LULD and are not published as a daily file. And
+every US figure is *derived* — NSE publishes prev-close, gain/loss direction
+and an official 52-week list, Yahoo publishes none of them.
+
+**TODO — move Markets US prices to Databento.** A market-wide extract is
+already downloaded (XNAS.ITCH, `ohlcv-1d`, ALL_SYMBOLS, 2018-05-01 → 2026-08-07,
+2,079 daily files). It is market-wide rather than S&P-500-only, authoritative
+rather than an unofficial endpoint, and already one file per session, so it
+drops into the existing day-folder layout. Parked for now; the reasoning and
+the two traps (`pretty_px: false` means fixed-point prices needing 1e-9 scaling;
+`.zst` needs zstandard or DuckDB) are at the top of `us_market_pull.py`.
+
 ## Two cadences — don't couple them
 
 The pipeline has two independent clocks. Confusing them is the easiest way to

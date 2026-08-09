@@ -1,6 +1,35 @@
 #!/usr/bin/env python3
 """US market loader — S&P 500 daily bars + fundamentals, via yfinance.
 
+TODO — REPLACE YAHOO WITH DATABENTO. Not being worked on now; this note exists
+so the decision isn't re-litigated later.
+
+  A market-wide Databento extract is already in hand (paid subscription):
+      dataset XNAS.ITCH, schema ohlcv-1d, symbols ALL_SYMBOLS
+      2018-05-01 -> 2026-08-07, 2,079 trading days, ~409 MB zipped
+      one zstd-compressed CSV per day + metadata.json + condition.json
+
+  Why it wins on every axis that matters here:
+    * MARKET-WIDE, not just the S&P 500 — the 503-name universe is a limitation
+      of the Yahoo path, not a choice, and it silently excludes every small cap.
+    * Authoritative exchange data rather than an unofficial, unstable endpoint
+      that fails with "database is locked" and needs a completeness guard.
+    * Already one file per session, so it drops straight into the
+      data/extracts_us/<YYYYMMDD>/ layout the API globs — the db.js views and
+      all four screens should carry over with only the column names remapped.
+    * 2018 onward gives far more 52-week context than the 5y pulled here.
+
+  Two things to get right when it happens:
+    * pretty_px is FALSE in this extract, so prices are fixed-point integers and
+      need 1e-9 scaling. Reading them raw yields prices a billion times too
+      large — the same class of error as the SEC per-share field.
+    * .zst needs zstandard (or DuckDB, which reads zstd CSV natively) — the
+      stdlib zipfile/gzip path used by extract.py will not open these.
+
+  Yahoo would still be the source for .info fundamentals; Databento is prices
+  only. So this replaces pull_bars, not the whole module.
+
+
 Temporary US counterpart to the NSE daily pipeline, feeding the "Markets US"
 tab. NSE hands us authoritative per-session files; Yahoo has no equivalent, so
 the shape is inverted: one long history per symbol is fetched, then SPLIT into
