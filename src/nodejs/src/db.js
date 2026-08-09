@@ -16,6 +16,9 @@ const EXTRACTS = path.join(ROOT, 'data', 'extracts').split(path.sep).join('/');
 // folders as the NSE extracts so FOLDER_DATE and the screen SQL carry over
 // unchanged. Built by src/python/us_market_pull.py.
 const EXTRACTS_US = path.join(ROOT, 'data', 'extracts_us').split(path.sep).join('/');
+// SEC Forms 3/4/5 quarterly data sets, one folder per <YYYYqN>.
+// Built by src/python/sec_insider_pull.py.
+const EXTRACTS_SEC = path.join(ROOT, 'data', 'extracts_sec').split(path.sep).join('/');
 // Consolidated single-file store (permanent shape for filing data — quarterly/
 // event filings were never a good fit for day partitioning). Built by
 // src/python/shareholding_load.py and src/python/insider_load.py.
@@ -435,6 +438,95 @@ async function createConnection() {
     FROM us_prices p
     LEFT JOIN us_roster r ON r.symbol = p.symbol
     WHERE p.pct_change IS NOT NULL
+  `);
+
+  // ------------------------------------------------- Insider Centric US (SEC)
+  //
+  // Forms 3/4/5 from the SEC's quarterly data sets. Unlike the NSE side, which
+  // shreds one XBRL document per filing over the network, this arrives already
+  // flattened — so there is no shred step, just SQL over the TSVs.
+  const secSub = `${EXTRACTS_SEC}/*/SUBMISSION.tsv`;
+  const secOwner = `${EXTRACTS_SEC}/*/REPORTINGOWNER.tsv`;
+  const secTrans = `${EXTRACTS_SEC}/*/NONDERIV_TRANS.tsv`;
+
+  // Tab-delimited, and dates are NSE's own DD-MON-YYYY shape, so D() applies.
+  // filing_date must be PARSED, not compared as text: min/max over the raw
+  // string sorts alphabetically ('01-APR-2025' < '31-OCT-2025'), which silently
+  // returns a nonsense range rather than an error.
+  const SEC_READ = (glob) =>
+    `read_csv('${glob}', delim='\t', header=true, all_varchar=true,
+              normalize_names=true, union_by_name=true)`;
+
+  await connection.run(`
+    CREATE OR REPLACE VIEW sec_submission AS
+    SELECT trim(accession_number) AS accession,
+           ${D('filing_date')} AS filing_date,
+           ${D('period_of_report')} AS period_of_report,
+           trim(document_type) AS form_type,
+           trim(issuercik) AS issuer_cik,
+           trim(issuername) AS issuer_name,
+           upper(trim(issuertradingsymbol)) AS symbol,
+           -- AFF10B5ONE flags a pre-arranged 10b5-1 plan, and it arrives in
+           -- FIVE encodings across quarters: '1'/'0', 'true'/'false', and
+           -- blank. A truthiness test on the raw text would read 'false' as
+           -- true. Normalised to a real boolean, with blank left NULL rather
+           -- than assumed false — "not stated" is not "no".
+           CASE lower(nullif(trim(aff10b5one), ''))
+             WHEN '1' THEN TRUE  WHEN 'true'  THEN TRUE
+             WHEN '0' THEN FALSE WHEN 'false' THEN FALSE
+           END AS plan_10b5_1
+    FROM ${SEC_READ(secSub)}
+  `);
+
+  await connection.run(`
+    CREATE OR REPLACE VIEW sec_owner AS
+    SELECT trim(accession_number) AS accession,
+           trim(rptownername) AS owner_name,
+           nullif(trim(rptowner_relationship), '') AS relationship,
+           nullif(trim(rptowner_title), '') AS officer_title
+    FROM ${SEC_READ(secOwner)}
+  `);
+
+  // The transactions themselves. TRANS_CODE is the whole story and is why a
+  // naive "insider buying" screen misleads:
+  //   P = open-market purchase, S = open-market sale   <- discretionary, informative
+  //   A = grant/award, F = shares withheld for tax, M = option exercise
+  //     <- compensation mechanics, NOT decisions to buy or sell
+  // In the loaded quarters A+F+M outnumber P nearly 7:1, so counting them as
+  // "buys" would drown the signal. is_open_market marks the distinction and the
+  // screens use it rather than hiding the other codes outright.
+  await connection.run(`
+    CREATE OR REPLACE VIEW sec_insider_trans AS
+    SELECT s.symbol, s.issuer_name, s.filing_date, s.form_type, s.plan_10b5_1,
+           o.owner_name, o.relationship, o.officer_title,
+           -- Bounded, because these dates are TYPED BY FILERS and the raw
+           -- column spans 0024-10-02 to 2028-03-19 — mistyped years and dates
+           -- in the future. A screen anchored on max(trans_date) would centre
+           -- its window on a typo and return nothing. This is nastier than the
+           -- NSE equivalent, where as_of comes from folder names we control.
+           -- Implausible dates become NULL rather than being dropped: the row
+           -- still counts, it just can't take part in a time window.
+           CASE WHEN ${D('t.trans_date')} BETWEEN DATE '2006-01-01' AND current_date
+                THEN ${D('t.trans_date')} END AS trans_date,
+           trim(t.trans_code) AS trans_code,
+           trim(t.trans_acquired_disp_cd) AS acquired_disposed,
+           TRY_CAST(t.trans_shares AS DOUBLE) AS shares,
+           TRY_CAST(t.trans_pricepershare AS DOUBLE) AS price_per_share,
+           -- Same story on price: the raw column reaches $1.63bn PER SHARE,
+           -- filers putting a total where a unit price belongs. One such row
+           -- computes to ~$95 quadrillion and would own any value ranking on
+           -- its own. Above $100k/share the figure is not credible for a
+           -- listed equity, so value_usd is withheld while shares and the raw
+           -- price stay visible — the trade is real even when its price isn't.
+           CASE WHEN TRY_CAST(t.trans_pricepershare AS DOUBLE) BETWEEN 0 AND 100000
+                THEN TRY_CAST(t.trans_shares AS DOUBLE)
+                   * TRY_CAST(t.trans_pricepershare AS DOUBLE) END AS value_usd,
+           TRY_CAST(t.shrs_ownd_folwng_trans AS DOUBLE) AS shares_after,
+           trim(t.direct_indirect_ownership) AS ownership,
+           trim(t.trans_code) IN ('P', 'S') AS is_open_market
+    FROM ${SEC_READ(secTrans)} t
+    JOIN sec_submission s ON s.accession = trim(t.accession_number)
+    LEFT JOIN sec_owner  o ON o.accession = trim(t.accession_number)
   `);
 
   return connection;

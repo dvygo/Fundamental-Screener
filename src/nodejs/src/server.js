@@ -34,6 +34,7 @@ import {
 import { searchCompanies, companyInsider, companyShareholding, companyDrilldown, companyPromoters, listSeries, insiderRecent } from './companies.js';
 import { corporateActions } from './corporate.js';
 import { usHigh52wEvents, usLow52wEvents, usGainersRecurrence, usLosersRecurrence } from './screens_us.js';
+import { usInsiderRecent, usInsiderNet, usInsiderForSymbol } from './insider_us.js';
 import { getNews, getSitemapNews } from './news.js';
 import { huntBoard } from './hunt.js';
 import { listFundManagers, listFirms, firmSearch } from './firms.js';
@@ -215,6 +216,23 @@ app.get('/api/us/screens/losers/recurrence', route((req, res) => {
   if (n === null || top === null) return null;
   return usLosersRecurrence(n, top);
 }));
+
+// Insider Centric US — SEC Forms 3/4/5 (src/python/sec_insider_pull.py).
+// open_market=0 widens to grants, tax withholding and option exercises; the
+// default excludes them because they are payroll events, not decisions.
+app.get('/api/us/insider/recent', route((req, res) => {
+  const days = intParam(req, res, 'days', 90);
+  if (days === null) return null;
+  return usInsiderRecent(days, req.query.open_market !== '0');
+}));
+
+app.get('/api/us/insider/net', route((req, res) => {
+  const days = intParam(req, res, 'days', 90);
+  if (days === null) return null;
+  return usInsiderNet(days);
+}));
+
+app.get('/api/us/insider/:symbol', route((req) => usInsiderForSymbol(req.params.symbol.toUpperCase())));
 
 app.get('/api/screens/gainers', route((req, res) => {
   const top = intParam(req, res, 'top', 20);

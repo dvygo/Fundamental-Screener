@@ -29,6 +29,11 @@ data/facts/
 # missed day is NOT lost — Yahoo serves history, so this rebuilds at any time.
 data/extracts_us/
 
+# SEC Forms 3/4/5 quarterly data sets (src/python/sec_insider_pull.py), one
+# folder per <YYYYqN>. Derived and re-downloadable — and unlike the NSE drop,
+# the SEC keeps every quarter back to 2006, so nothing here is unrecoverable.
+data/extracts_sec/
+
 # Consolidated single-file filing store — the permanent shape for quarterly/event
 # filing data (promoter holding + insider). Derived: shareholding.parquet rebuilds
 # in seconds from the index CSV (shareholding_load.py), insider.parquet re-shreds
