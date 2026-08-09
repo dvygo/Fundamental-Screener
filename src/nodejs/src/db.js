@@ -445,6 +445,15 @@ async function createConnection() {
   // Forms 3/4/5 from the SEC's quarterly data sets. Unlike the NSE side, which
   // shreds one XBRL document per filing over the network, this arrives already
   // flattened — so there is no shred step, just SQL over the TSVs.
+  // TABLE, not VIEW — the same call this made on security/security_master.
+  // As views these re-parsed every quarter's TSVs on each request: 386k
+  // submissions, 586k transactions and 481k owner rows, which cost 26.7s on the
+  // first hit and 0.69s once DuckDB had them cached. That first hit is fatal
+  // rather than merely slow, because the Vercel proxy gives upstream 25s — so
+  // the cold request timed out and the tab appeared broken. Materialising moves
+  // the cost to startup, where it is paid once and nobody is waiting on it.
+  // Trade-off: new quarters need an API restart to appear, which matches the
+  // SEC's quarterly cadence.
   const secSub = `${EXTRACTS_SEC}/*/SUBMISSION.tsv`;
   const secOwner = `${EXTRACTS_SEC}/*/REPORTINGOWNER.tsv`;
   const secTrans = `${EXTRACTS_SEC}/*/NONDERIV_TRANS.tsv`;
@@ -458,7 +467,7 @@ async function createConnection() {
               normalize_names=true, union_by_name=true)`;
 
   await connection.run(`
-    CREATE OR REPLACE VIEW sec_submission AS
+    CREATE OR REPLACE TABLE sec_submission AS
     SELECT trim(accession_number) AS accession,
            ${D('filing_date')} AS filing_date,
            ${D('period_of_report')} AS period_of_report,
@@ -479,7 +488,7 @@ async function createConnection() {
   `);
 
   await connection.run(`
-    CREATE OR REPLACE VIEW sec_owner AS
+    CREATE OR REPLACE TABLE sec_owner AS
     SELECT trim(accession_number) AS accession,
            trim(rptownername) AS owner_name,
            nullif(trim(rptowner_relationship), '') AS relationship,
@@ -496,7 +505,7 @@ async function createConnection() {
   // "buys" would drown the signal. is_open_market marks the distinction and the
   // screens use it rather than hiding the other codes outright.
   await connection.run(`
-    CREATE OR REPLACE VIEW sec_insider_trans AS
+    CREATE OR REPLACE TABLE sec_insider_trans AS
     SELECT s.symbol, s.issuer_name, s.filing_date, s.form_type, s.plan_10b5_1,
            o.owner_name, o.relationship, o.officer_title,
            -- Bounded, because these dates are TYPED BY FILERS and the raw

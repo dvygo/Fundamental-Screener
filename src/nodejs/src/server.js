@@ -35,6 +35,7 @@ import { searchCompanies, companyInsider, companyShareholding, companyDrilldown,
 import { corporateActions } from './corporate.js';
 import { usHigh52wEvents, usLow52wEvents, usGainersRecurrence, usLosersRecurrence } from './screens_us.js';
 import { usInsiderRecent, usInsiderNet, usInsiderForSymbol } from './insider_us.js';
+import { getConnection } from './db.js'; // for the startup warm-up below
 import { getNews, getSitemapNews } from './news.js';
 import { huntBoard } from './hunt.js';
 import { listFundManagers, listFirms, firmSearch } from './firms.js';
@@ -336,6 +337,21 @@ app.get('/api/insider/recent', route((req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Fundamental-Screener API listening on :${PORT} (http)`);
+
+  // Build the DuckDB views/tables now rather than on the first request.
+  // getConnection() is lazy and memoised, so without this the whole setup —
+  // including materialising the SEC tables from 8 quarters of TSVs — is paid by
+  // whoever happens to arrive first. That took ~17s, and the Vercel proxy only
+  // waits 25s, so the first visitor after every restart got a timeout while
+  // every later one was served in milliseconds.
+  //
+  // Failure here is logged, not fatal: the API should still start and let the
+  // per-route error handling report the problem, rather than refusing to boot
+  // because one glob is empty.
+  const t0 = Date.now();
+  getConnection()
+    .then(() => console.log(`DuckDB views ready in ${Date.now() - t0}ms`))
+    .catch((err) => console.error('DuckDB warm-up failed:', err.message));
 });
 
 // Optional HTTPS listener, for the hop between the Vercel proxy and this box.
