@@ -356,11 +356,17 @@ async function createConnection() {
   // the bar history. That is the honest place for it — same as the NSE screens
   // deriving from NSE's files rather than baking values in at load time — but
   // it means a US "new 52-week high" is our computation, not an exchange's.
+  // TABLE, not VIEW, for the same reason as the SEC tables: as views these
+  // re-parsed 1,255 day files on every request. Views are lazy, so the
+  // startup warm-up created them without reading anything and the first real
+  // query still paid the full parse — 26s, past the Vercel proxy's 25s budget,
+  // which surfaced as a 502 in production rather than merely a slow page.
+  // Materialising moves it into the warm-up where it is paid once.
   const usBars = `${EXTRACTS_US}/*/sp500_bars_*.csv`;
   const usRoster = `${EXTRACTS_US}/_meta/sp500_constituents.csv`;
 
   await connection.run(`
-    CREATE OR REPLACE VIEW us_roster AS
+    CREATE OR REPLACE TABLE us_roster AS
     SELECT trim(symbol) AS wiki_symbol,
            -- Wikipedia writes class shares with a dot (BRK.B), Yahoo with a
            -- dash (BRK-B). Bars carry the Yahoo form, so bridge on that.
@@ -379,7 +385,7 @@ async function createConnection() {
   // from the folder, matching the NSE convention rather than trusting the Date
   // column, so a mis-split file can't claim another session's date.
   await connection.run(`
-    CREATE OR REPLACE VIEW us_daily AS
+    CREATE OR REPLACE TABLE us_daily AS
     SELECT * FROM (
       -- b._close, not b.close: normalize_names prefixes an underscore when a
       -- column name collides with a reserved word, so Yahoo's "Close" arrives
@@ -409,7 +415,7 @@ async function createConnection() {
   // high when we simply don't hold 52 weeks of history for it yet — without
   // that guard every symbol's earliest bars look like records.
   await connection.run(`
-    CREATE OR REPLACE VIEW us_prices AS
+    CREATE OR REPLACE TABLE us_prices AS
     SELECT
       as_of, symbol, open, high, low, close, adj_close, volume,
       lag(close) OVER w AS prev_close,
@@ -429,7 +435,7 @@ async function createConnection() {
   // without it the rank window is nondeterministic and two identical requests
   // can return different rows (this bit the NSE recurrence screens).
   await connection.run(`
-    CREATE OR REPLACE VIEW us_gainloss AS
+    CREATE OR REPLACE TABLE us_gainloss AS
     SELECT p.as_of, p.symbol, r.company_name, r.sector,
            p.close, p.prev_close, p.pct_change, p.volume,
            CASE WHEN p.pct_change >= 0 THEN 'G' ELSE 'L' END AS direction,
