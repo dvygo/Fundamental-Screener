@@ -168,6 +168,18 @@ def pull_info(symbols: list[str], limit: int) -> None:
     """Lossless .info shred -> long parquet. Paced; failures skip, never abort."""
     import yfinance as yf
 
+    # Preflight. This run costs ~10 minutes of paced network calls and keeps
+    # every fact in memory until the end, so anything that can stop the WRITE
+    # must be proven before the FETCH starts — the first attempt discovered a
+    # missing parquet engine only after all 503 symbols were already fetched.
+    import duckdb
+    META.mkdir(parents=True, exist_ok=True)
+    probe = META / ".write_probe.parquet"
+    con = duckdb.connect()
+    con.execute(f"COPY (SELECT 1 AS ok) TO '{probe.as_posix()}' (FORMAT PARQUET)")
+    con.close()
+    probe.unlink(missing_ok=True)
+
     rows: list[dict] = []
     todo = symbols[:limit] if limit else symbols
     ok = failed = 0
@@ -190,7 +202,16 @@ def pull_info(symbols: list[str], limit: int) -> None:
 
     META.mkdir(parents=True, exist_ok=True)
     out = META / "sp500_info.parquet"
-    pd.DataFrame(rows).to_parquet(out, index=False)
+    # DuckDB, not pandas.to_parquet: to_parquet needs pyarrow or fastparquet,
+    # and we ship neither — the first run fetched all 503 symbols over ~10
+    # paced minutes and then threw ImportError on this line, losing the lot.
+    # insider_load.py already writes its parquet through DuckDB, so this both
+    # removes the dependency and matches how the rest of the repo does it.
+    import duckdb
+    con = duckdb.connect()
+    con.register("facts", pd.DataFrame(rows))
+    con.execute(f"COPY facts TO '{out.as_posix()}' (FORMAT PARQUET)")
+    con.close()
     log.info("done: %s (%d facts, %d symbols; failed %d)", out, len(rows), ok, failed)
 
 
