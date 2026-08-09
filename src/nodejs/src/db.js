@@ -12,6 +12,10 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..', '..', '..');
 const EXTRACTS = path.join(ROOT, 'data', 'extracts').split(path.sep).join('/');
+// US working root — S&P 500 bars from Yahoo, split into the same YYYYMMDD day
+// folders as the NSE extracts so FOLDER_DATE and the screen SQL carry over
+// unchanged. Built by src/python/us_market_pull.py.
+const EXTRACTS_US = path.join(ROOT, 'data', 'extracts_us').split(path.sep).join('/');
 // Consolidated single-file store (permanent shape for filing data — quarterly/
 // event filings were never a good fit for day partitioning). Built by
 // src/python/shareholding_load.py and src/python/insider_load.py.
@@ -335,6 +339,102 @@ async function createConnection() {
     FROM read_csv('${bc}', header=true, all_varchar=true, normalize_names=true,
                   filename=true, union_by_name=true)
     WHERE trim(series) = 'EQ' AND nullif(trim(purpose), '') IS NOT NULL
+  `);
+
+  // ---------------------------------------------------------------- Markets US
+  //
+  // Temporary S&P 500 counterpart to the NSE screens, fed by Yahoo via
+  // src/python/us_market_pull.py. The day-folder layout is identical, so
+  // FOLDER_DATE works unchanged.
+  //
+  // THE IMPORTANT DIFFERENCE FROM THE NSE SIDE: NSE publishes prev-close, the
+  // gain/loss direction and a 52-week high/low list as authoritative files. For
+  // the US there is no such thing, so every one of those is DERIVED here from
+  // the bar history. That is the honest place for it — same as the NSE screens
+  // deriving from NSE's files rather than baking values in at load time — but
+  // it means a US "new 52-week high" is our computation, not an exchange's.
+  const usBars = `${EXTRACTS_US}/*/sp500_bars_*.csv`;
+  const usRoster = `${EXTRACTS_US}/_meta/sp500_constituents.csv`;
+
+  await connection.run(`
+    CREATE OR REPLACE VIEW us_roster AS
+    SELECT trim(symbol) AS wiki_symbol,
+           -- Wikipedia writes class shares with a dot (BRK.B), Yahoo with a
+           -- dash (BRK-B). Bars carry the Yahoo form, so bridge on that.
+           replace(trim(symbol), '.', '-') AS symbol,
+           -- _security, not security: normalize_names underscore-prefixes
+           -- reserved words, the same way NSE's SECURITY becomes _security.
+           -- And "GICS Sub-Industry" normalises to gics_subindustry — the
+           -- hyphen is dropped rather than becoming an underscore.
+           trim(_security) AS company_name,
+           trim(gics_sector) AS sector,
+           trim(gics_subindustry) AS sub_industry
+    FROM read_csv('${usRoster}', header=true, all_varchar=true, normalize_names=true)
+  `);
+
+  // One row per (session, symbol), every field yfinance returned. as_of comes
+  // from the folder, matching the NSE convention rather than trusting the Date
+  // column, so a mis-split file can't claim another session's date.
+  await connection.run(`
+    CREATE OR REPLACE VIEW us_daily AS
+    SELECT * FROM (
+      -- b._close, not b.close: normalize_names prefixes an underscore when a
+      -- column name collides with a reserved word, so Yahoo's "Close" arrives
+      -- as _close. Same trap as NSE's SECURITY -> _security in gl_symbol.
+      -- Columns are alias-qualified so DuckDB's lateral aliasing can't resolve
+      -- a bare source name to the output alias being defined beside it.
+      SELECT try_strptime(${FOLDER_DATE('b.filename')}, '%Y%m%d')::date AS as_of,
+             trim(b.symbol) AS symbol,
+             TRY_CAST(b.open AS DOUBLE) AS open,
+             TRY_CAST(b.high AS DOUBLE) AS high,
+             TRY_CAST(b.low AS DOUBLE) AS low,
+             TRY_CAST(b._close AS DOUBLE) AS close,
+             TRY_CAST(b.adj_close AS DOUBLE) AS adj_close,
+             TRY_CAST(b.volume AS DOUBLE) AS volume,
+             TRY_CAST(b.dividends AS DOUBLE) AS dividends,
+             TRY_CAST(b.stock_splits AS DOUBLE) AS stock_splits
+      FROM read_csv('${usBars}', header=true, all_varchar=true, normalize_names=true,
+                    filename=true, union_by_name=true) b
+    ) WHERE as_of IS NOT NULL AND close IS NOT NULL
+  `);
+
+  // Derived per-session move + trailing 52-week extremes.
+  //
+  // 252 rows ~= one trading year. The window is ROWS, not RANGE over dates, so
+  // a symbol's own trading days are counted and holidays don't shorten it.
+  // `sessions_seen` exists so a screen can refuse to call something a 52-week
+  // high when we simply don't hold 52 weeks of history for it yet — without
+  // that guard every symbol's earliest bars look like records.
+  await connection.run(`
+    CREATE OR REPLACE VIEW us_prices AS
+    SELECT
+      as_of, symbol, open, high, low, close, adj_close, volume,
+      lag(close) OVER w AS prev_close,
+      CASE WHEN lag(close) OVER w > 0
+           THEN round((close - lag(close) OVER w) / lag(close) OVER w * 100, 4)
+      END AS pct_change,
+      max(high) OVER w52 AS hi_52w,
+      min(low)  OVER w52 AS lo_52w,
+      count(*)  OVER w52 AS sessions_seen
+    FROM us_daily
+    WINDOW
+      w   AS (PARTITION BY symbol ORDER BY as_of),
+      w52 AS (PARTITION BY symbol ORDER BY as_of ROWS BETWEEN 251 PRECEDING AND CURRENT ROW)
+  `);
+
+  // Gainers/losers per session, ranked. The tiebreaker on symbol is deliberate:
+  // without it the rank window is nondeterministic and two identical requests
+  // can return different rows (this bit the NSE recurrence screens).
+  await connection.run(`
+    CREATE OR REPLACE VIEW us_gainloss AS
+    SELECT p.as_of, p.symbol, r.company_name, r.sector,
+           p.close, p.prev_close, p.pct_change, p.volume,
+           CASE WHEN p.pct_change >= 0 THEN 'G' ELSE 'L' END AS direction,
+           row_number() OVER (PARTITION BY p.as_of ORDER BY p.pct_change DESC, p.symbol) AS gain_rank,
+           row_number() OVER (PARTITION BY p.as_of ORDER BY p.pct_change ASC,  p.symbol) AS lose_rank
+    FROM us_prices p
+    LEFT JOIN us_roster r ON r.symbol = p.symbol
+    WHERE p.pct_change IS NOT NULL
   `);
 
   return connection;

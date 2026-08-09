@@ -23,6 +23,12 @@ data/extracts/sebi/*
 # XML cache (src/xbrl_populate.py). Queried directly (DuckDB glob); MinIO is v2.
 data/facts/
 
+# US market working root (src/python/us_market_pull.py) — S&P 500 bars split
+# into day folders mirroring data/extracts/. Wholly derived: one command
+# re-fetches it from Yahoo, so it is not committed. Unlike the NSE drop, a
+# missed day is NOT lost — Yahoo serves history, so this rebuilds at any time.
+data/extracts_us/
+
 # Consolidated single-file filing store — the permanent shape for quarterly/event
 # filing data (promoter holding + insider). Derived: shareholding.parquet rebuilds
 # in seconds from the index CSV (shareholding_load.py), insider.parquet re-shreds

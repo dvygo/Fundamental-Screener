@@ -9,3 +9,8 @@ minio>=7.2.0        # push raw/bronze to MinIO (S3), WORM object-lock
 duckdb>=1.5.0       # shred XBRL -> parquet; schema-on-read screens over MinIO
 pytz>=2024.1        # duckdb needs it to hand TIMESTAMPTZ back to Python
                     # (news.parquet stores IST-offset publication times)
+
+# US market feed (src/python/us_market_pull.py) — S&P 500 bars for Markets US.
+yfinance>=1.5.0     # unofficial Yahoo client; treat outages as expected, not exceptional
+lxml>=5.0           # pandas.read_html flavor for the Wikipedia constituent table
+                    # (the default path wants html5lib, which we don't ship)
