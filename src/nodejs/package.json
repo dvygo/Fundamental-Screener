@@ -1,7 +1,7 @@
 {
   "name": "nodejs",
   "version": "1.0.0",
-  "description": "",
+  "description": "REST API for Fundamental-Screener - Express 5 + DuckDB schema-on-read over NSE/BSE extracts",
   "main": "index.js",
   "scripts": {
     "build": "node build.js",
@@ -9,9 +9,17 @@
     "dev": "node src/server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "duckdb",
+    "express",
+    "stock-screener",
+    "nse",
+    "bse",
+    "indian-equities",
+    "market-data"
+  ],
+  "author": "dvygo (Deshik Narasimha)",
+  "license": "BSD-3-Clause",
   "type": "module",
   "dependencies": {
     "@duckdb/node-api": "^1.5.5-r.1",
