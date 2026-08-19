@@ -7,9 +7,9 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ROOT } from '../paths.js';
-import { queryJson } from '../db.js';
-import { screenerFullTextSearch } from './screener.js';
+import { ROOT } from '#paths.js';
+import { queryJson } from '#db.js';
+import { screenerFullTextSearch } from '#india/screener.js';
 
 
 // The static rupeevest index (fund_manager_code, fund_mgr1, fund_houses,

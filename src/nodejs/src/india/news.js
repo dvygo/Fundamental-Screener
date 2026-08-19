@@ -20,10 +20,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ROOT } from '../paths.js';
+import { ROOT } from '#paths.js';
 import process from 'node:process';
 import * as cheerio from 'cheerio';
-import { queryJson } from '../db.js';
+import { queryJson } from '#db.js';
 
 
 const CACHE_DIR = path.join(ROOT, 'data', 'raw', 'livemint');

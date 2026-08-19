@@ -30,15 +30,15 @@ import {
   screen_low52wCombined,
   screen6a_upperCircuit,
   screen6b_lowerCircuit,
-} from './india/screens.js';
-import { searchCompanies, companyInsider, companyShareholding, companyDrilldown, companyPromoters, listSeries, insiderRecent } from './india/companies.js';
-import { corporateActions } from './india/corporate.js';
-import { usHigh52wEvents, usLow52wEvents, usGainersRecurrence, usLosersRecurrence } from './us/screens_us.js';
-import { usInsiderRecent, usInsiderNet, usInsiderForSymbol } from './us/insider_us.js';
-import { getConnection } from './db.js'; // for the startup warm-up below
-import { getNews, getSitemapNews } from './india/news.js';
-import { huntBoard } from './india/hunt.js';
-import { listFundManagers, listFirms, firmSearch } from './india/firms.js';
+} from '#india/screens.js';
+import { searchCompanies, companyInsider, companyShareholding, companyDrilldown, companyPromoters, listSeries, insiderRecent } from '#india/companies.js';
+import { corporateActions } from '#india/corporate.js';
+import { usHigh52wEvents, usLow52wEvents, usGainersRecurrence, usLosersRecurrence } from '#us/screens_us.js';
+import { usInsiderRecent, usInsiderNet, usInsiderForSymbol } from '#us/insider_us.js';
+import { getConnection } from '#db.js'; // for the startup warm-up below
+import { getNews, getSitemapNews } from '#india/news.js';
+import { huntBoard } from '#india/hunt.js';
+import { listFundManagers, listFirms, firmSearch } from '#india/firms.js';
 
 const PORT = process.env.PORT || 3000;
 const app = express();

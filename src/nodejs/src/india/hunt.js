@@ -39,8 +39,8 @@
 // dedicated Results / Orderbook / Capex announcements feed — left at 0 so the
 // board stays honest about what it measures.
 
-import { queryJson } from '../db.js';
-import { getNews } from './news.js';
+import { queryJson } from '#db.js';
+import { getNews } from '#india/news.js';
 
 // "On the gainers / losers list" = the top-N by %-change that session.
 const TOP = 20;

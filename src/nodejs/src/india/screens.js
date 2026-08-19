@@ -1,7 +1,7 @@
 // Layer A screens (requirement.md 1-5), ported from src/python/screens.py.
 // Same SQL, JSON out instead of a pretty-printed table.
 
-import { queryJson } from '../db.js';
+import { queryJson } from '#db.js';
 
 export function screen1_high52wLastDay() {
   return queryJson(`
