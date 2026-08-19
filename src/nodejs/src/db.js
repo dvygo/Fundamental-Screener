@@ -7,6 +7,7 @@
 
 import { DuckDBInstance } from '@duckdb/node-api';
 import path from 'node:path';
+import fsSync from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { ROOT } from '#paths.js';
 
@@ -445,6 +446,55 @@ async function createConnection() {
     LEFT JOIN us_roster r ON r.symbol = p.symbol
     WHERE p.pct_change IS NOT NULL
   `);
+
+  // ------------------------------------------- Stock Centric US (Live lane)
+  //
+  // finviz fundamentals + the Yahoo .info shred, both lossless long tables
+  // (symbol, key, value). Kept long rather than pivoted for the reason
+  // xbrl_populate.py records: a fixed column list silently drops whatever the
+  // source added since it was written, and finviz publishes ~84 keys that
+  // drift. The UI pivots at query time instead.
+  //
+  // Yahoo is the FALLBACK here, not a peer: finviz is the Live lane's declared
+  // fundamentals source, but a scrape can fail for a symbol, and .info still
+  // carries market-derived fields finviz does not publish.
+  const finvizFacts = `${EXTRACTS_US}/_meta/finviz_fundamentals.parquet`;
+  const yahooInfo = `${EXTRACTS_US}/_meta/sp500_info.parquet`;
+
+  // read_parquet over a file that may not exist yet would take the whole
+  // connection down, so each is registered only when present. A missing feed
+  // should cost its own tab, not every screen in the app.
+  const has = (p) => fsSync.existsSync(p);
+
+  if (has(path.join(ROOT, 'data', 'extracts_us', '_meta', 'finviz_fundamentals.parquet'))) {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_fundamentals AS
+      SELECT upper(trim(symbol)) AS symbol, trim(key) AS key, trim(value) AS value,
+             'finviz' AS source
+      FROM read_parquet('${finvizFacts}')
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_fundamentals AS
+      SELECT NULL::VARCHAR AS symbol, NULL::VARCHAR AS key,
+             NULL::VARCHAR AS value, NULL::VARCHAR AS source WHERE FALSE
+    `);
+  }
+
+  if (has(path.join(ROOT, 'data', 'extracts_us', '_meta', 'sp500_info.parquet'))) {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_info AS
+      SELECT upper(trim(symbol)) AS symbol, trim(key) AS key, trim(value) AS value,
+             'yahoo' AS source
+      FROM read_parquet('${yahooInfo}')
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_info AS
+      SELECT NULL::VARCHAR AS symbol, NULL::VARCHAR AS key,
+             NULL::VARCHAR AS value, NULL::VARCHAR AS source WHERE FALSE
+    `);
+  }
 
   // ------------------------------------------------- Insider Centric US (SEC)
   //
