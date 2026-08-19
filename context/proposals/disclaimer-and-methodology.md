@@ -88,6 +88,21 @@ The substance already exists as code comments; this is mostly transcription.
 - 10b5-1 plan sales are counted separately: a sale scheduled months in advance
   is weak evidence of present conviction.
 
+**Data integrity, stated once instead of linked per row.** Per-row filing links
+are deliberately not shown (decided 2026-08-19). The lineage is asserted here
+instead, which puts the obligation on this page to be exact:
+
+- Say which feeds come from a **regulator or exchange** (NSE, BSE, SEC) and
+  which come from a **third party** (screener.in, Yahoo, finviz). The live US
+  insider feed is scraped from finviz, which parses SEC Form 4s — a derivative,
+  and the page should use that word.
+- Say how fresh each one is, because they differ by months. SEC insider bulk is
+  quarterly and can be ~4 months behind by the end of a quarter; the finviz feed
+  is same-day; NSE is T-1; Yahoo `.info` is a point-in-time snapshot with no
+  history at all.
+- Where a tab blends sources, label per panel rather than per page. A 3-week-old
+  reported EPS beside a live P/E under one "as of" stamp misrepresents both.
+
 **Honest caveats** — the section that earns the rest its credibility:
 
 - SEC data is filer-entered and contains real errors. `trans_date` spans
