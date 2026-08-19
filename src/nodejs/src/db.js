@@ -8,7 +8,7 @@
 import { DuckDBInstance } from '@duckdb/node-api';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ROOT } from './paths.js';
+import { ROOT } from '#paths.js';
 
 
 const EXTRACTS = path.join(ROOT, 'data', 'extracts').split(path.sep).join('/');
