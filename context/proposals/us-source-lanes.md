@@ -61,3 +61,29 @@ the separation IS the feature.
   a lane switcher alongside the market dropdown? Suffixes are simpler; a
   switcher scales better if a third lane ever appears.
 - HUNT US, when it happens, has to pick a lane or explicitly straddle both.
+
+---
+
+## TODO — split `src/python/` into india/ and us/
+
+Not done (deferred 2026-08-19). The frontend (`components/india|us/`) and the
+API (`src/nodejs/src/india|us/`) are already split; Python still has all 19
+loaders in one folder.
+
+The move itself is trivial. The catch is the same one the API split hit: every
+loader derives the repo root as `Path(__file__).resolve().parents[2]`, which is
+correct at `src/python/` and wrong one level deeper. Each moved file needs
+`parents[3]`.
+
+Python has no bundling step, so unlike the API there is no second resolution
+mode to keep in agreement — a plain depth fix is enough, and no `paths.py`
+indirection is required. Sibling imports also keep working, since Python puts
+the script's own directory on `sys.path` (this matters for
+`insider_load.py`, which imports `fetch`/`shred` from `xbrl_populate.py`).
+
+Suggested split — `us/`: `us_market_pull.py`, `sec_insider_pull.py`.
+`india/`: everything else. `data_sync.py` stays at the root; it syncs `data/`
+wholesale and belongs to neither market.
+
+Every documented command path changes with it (CLAUDE.md, the example env
+files, this folder), so grep for `src/python/` and update in the same commit.
