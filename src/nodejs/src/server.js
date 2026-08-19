@@ -35,6 +35,7 @@ import { searchCompanies, companyInsider, companyShareholding, companyDrilldown,
 import { corporateActions } from '#india/corporate.js';
 import { usHigh52wEvents, usLow52wEvents, usGainersRecurrence, usLosersRecurrence } from '#us/screens_us.js';
 import { usInsiderRecent, usInsiderNet, usInsiderForSymbol } from '#us/insider_us.js';
+import { usStockFundamentals, usStockPrices, usStockCoverage } from '#us/stock_us.js';
 import { getConnection } from '#db.js'; // for the startup warm-up below
 import { getNews, getSitemapNews } from '#india/news.js';
 import { huntBoard } from '#india/hunt.js';
@@ -217,6 +218,21 @@ app.get('/api/us/screens/losers/recurrence', route((req, res) => {
   if (n === null || top === null) return null;
   return usLosersRecurrence(n, top);
 }));
+
+// Stock Centric US (Live lane) — finviz fundamentals + Yahoo bars.
+app.get('/api/us/stock/:symbol/fundamentals', route((req) =>
+  usStockFundamentals(req.params.symbol.toUpperCase())));
+
+app.get('/api/us/stock/:symbol/prices', route((req, res) => {
+  const days = intParam(req, res, 'days', 180);
+  if (days === null) return null;
+  return usStockPrices(req.params.symbol.toUpperCase(), days);
+}));
+
+// Per-source coverage, so the page can state ONE honest freshness stamp
+// instead of asserting one it never checked.
+app.get('/api/us/stock/:symbol/coverage', route((req) =>
+  usStockCoverage(req.params.symbol.toUpperCase())));
 
 // Insider Centric US — SEC Forms 3/4/5 (src/python/sec_insider_pull.py).
 // open_market=0 widens to grants, tax withholding and option exercises; the
