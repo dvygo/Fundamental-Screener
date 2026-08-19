@@ -18,7 +18,7 @@
 //    thinks today; a discretionary sale says rather more. The flag rides along
 //    so the reader can weigh them differently.
 
-import { queryJson } from './db.js';
+import { queryJson } from '../db.js';
 
 // Anchored on the data, not on today's clock: the SEC publishes quarterly, so
 // "recent" means recent relative to what has actually been loaded. Using

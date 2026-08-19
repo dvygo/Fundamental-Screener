@@ -16,7 +16,7 @@
 //   "new 52-week high" is therefore our calculation over trailing sessions, not
 //   an exchange's declaration. It is labelled as such in the UI.
 
-import { queryJson } from './db.js';
+import { queryJson } from '../db.js';
 
 // A symbol only qualifies for a 52-week screen once we actually hold 52 weeks
 // of its bars. Without this guard every symbol's earliest session trivially

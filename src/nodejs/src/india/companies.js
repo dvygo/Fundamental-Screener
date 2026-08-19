@@ -2,7 +2,7 @@
 // shareholding (B2), shredded from lossless XBRL facts (src/python/xbrl_populate.py).
 // Only covers the dates that script has been run against so far - see db.js.
 
-import { queryJson } from './db.js';
+import { queryJson } from '../db.js';
 import { screenerDrilldown, screenerPromoters, screenerInsider } from './screener.js';
 
 // Distinct series codes present in the latest security master (EQ, BE, BL, SM…),

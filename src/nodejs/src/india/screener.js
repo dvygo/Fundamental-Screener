@@ -18,9 +18,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { ROOT } from '../paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, '..', '..', '..');
+
 const RAW_DIR = path.join(ROOT, 'data', 'raw', 'screener');
 const htmlPath = (sym) => path.join(RAW_DIR, `${sym}.html`);
 

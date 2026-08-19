@@ -20,12 +20,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ROOT } from '../paths.js';
 import process from 'node:process';
 import * as cheerio from 'cheerio';
-import { queryJson } from './db.js';
+import { queryJson } from '../db.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, '..', '..', '..');
+
 const CACHE_DIR = path.join(ROOT, 'data', 'raw', 'livemint');
 const CACHE_FILE = path.join(CACHE_DIR, 'today.xml');
 
