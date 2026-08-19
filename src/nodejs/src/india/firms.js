@@ -7,11 +7,11 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { queryJson } from './db.js';
+import { ROOT } from '../paths.js';
+import { queryJson } from '../db.js';
 import { screenerFullTextSearch } from './screener.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, '..', '..', '..');
+
 // The static rupeevest index (fund_manager_code, fund_mgr1, fund_houses,
 // n_schemes, n_stocks). DuckDB reads it straight off disk.
 const FMI = path.join(ROOT, 'data', 'extracts', 'rupeevest', 'fund_manager_index.csv').split(path.sep).join('/');

@@ -8,9 +8,9 @@
 import { DuckDBInstance } from '@duckdb/node-api';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ROOT } from './paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, '..', '..', '..');
+
 const EXTRACTS = path.join(ROOT, 'data', 'extracts').split(path.sep).join('/');
 // US working root — S&P 500 bars from Yahoo, split into the same YYYYMMDD day
 // folders as the NSE extracts so FOLDER_DATE and the screen SQL carry over

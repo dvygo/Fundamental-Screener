@@ -2,7 +2,7 @@
 // with ex-date / record-date), from the bc<date>.csv daily PR-bundle file.
 // Market-wide list joined to the security master for the official company name.
 
-import { queryJson } from './db.js';
+import { queryJson } from '../db.js';
 
 export function corporateActions() {
   return queryJson(`
