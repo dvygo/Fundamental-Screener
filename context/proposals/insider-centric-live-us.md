@@ -90,14 +90,36 @@ which is the opposite of what the methodology-page proposal argues for.
 **It is fragile.** HTML layout changes break it without warning. EDGAR's
 formats are documented and stable.
 
-## Recommendation
+## Decision (2026-08-19)
 
-Build **A**, not B. B is a stopgap that acquires a scheduling obligation and
-loses provenance, to save work on a loader we want regardless.
+**Go with B, the finviz scrape, and handle integrity through documentation
+rather than per-row links.** Per-row back-traceability is explicitly OFF for the
+viewing experience: no filing link in the table. Instead the methodology /
+disclaimer page states the lineage plainly — which tab is scraped, which is
+exchange-published, and how fresh each one is. That is the mtf.trading model:
+integrity asserted once, in one auditable place, instead of a link per row.
 
-If B ships first for speed, treat it as temporary and keep the accession number
-question open — without it, rows cannot be reconciled against the bulk data
-when the quarter finally publishes, and the two sources will silently disagree.
+See `disclaimer-and-methodology.md`; this feed needs a row of its own in that
+sources table, and it is the one entry where the source is a third party rather
+than a regulator, so it should say so in those words.
+
+### The one thing that survives this decision
+
+Dropping the link solves the *display* question. It does not solve
+reconciliation, which is internal and still real.
+
+When `2026q3` publishes in October, the bulk data will contain the same trades
+finviz has already given us. Without a key to match on, those rows either
+duplicate or the two sources quietly disagree — and "quietly" is the problem,
+because nothing in the UI would show it.
+
+A natural key of `(symbol, owner_name, trans_date, trans_code, shares)` is
+probably enough, but it is worth proving against a real overlap BEFORE the
+scrape accumulates months of rows: pick a window the bulk already covers, scrape
+it, and check the two agree row for row. Doing that check early costs an hour;
+doing it in October costs an unpicking job. The alternative is to carry the
+accession number internally without ever rendering it, which keeps the exact key
+the SEC uses and sidesteps the question entirely.
 
 ## Also worth taking from that page
 
