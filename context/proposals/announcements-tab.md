@@ -99,13 +99,30 @@ TrueWealth renders these as `General :: Newspaper Publication`, `Outcome :: AGM`
 written — a split, not a keyword classifier. Bucket the long tail of NSE
 subjects into a handful of top-level groups and the chips fall out.
 
-### 2. What our file does NOT have
+### 2. What our file lacks — and where to get it (corrected)
 
-Their feed shows an intraday timestamp per row (14:07:51) and a Download PDF
-link. Ours is an END-OF-DAY DIGEST with neither. Anything claiming to be a live
-feed needs NSE's announcements API, not the daily drop. Worth being clear about
-before promising "real-time" — the daily file supports a searchable archive, not
-a ticker.
+`an<date>.txt` is an END-OF-DAY DIGEST: no intraday timestamp, no attachment
+link, where their feed shows both.
+
+**But we already have the mechanism, just not for this feed.** Every CF-* index
+we download carries a document URL per filing:
+
+    CF-FR            "** XBRL"   -> https://nsearchives.nseindia.com/corporate/xbrl/INDAS_121271_1686982_01072026110051.xml
+    CF-Shareholding  "ACTION"    -> same shape
+    CF-Insider       xbrl_url    -> already loaded into insider.parquet
+
+So the "Download PDF" TrueWealth shows is a link into NSE's own archive, and we
+resolve exactly that kind of link already — `insider_load.py` fetches and shreds
+one per filing.
+
+The gap is that we pull the Insider, Shareholding and FR indexes and **not the
+Announcements one**. Same corporate-filings source, same CF-* shape, same manual
+drop into `data/raw/`. Adding it brings the timestamp AND the attachment link,
+and makes `an<date>.txt` the fallback rather than the primary — the daily digest
+is then only needed for days the index does not cover.
+
+That is a download, not an API integration. An earlier draft of this document
+said a live feed "needs NSE's announcements API"; that was wrong.
 
 ### 3. The feature worth copying is the CHART, not the verdict
 
