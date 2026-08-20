@@ -77,3 +77,56 @@ Announcements first, and stop at step 2 for the first pass. A parsed, bucketed,
 filterable announcements feed with the routine 80% suppressed is genuinely
 useful on its own, ships without any model, and is the honest half of what
 TrueWealth is selling.
+
+---
+
+## Revised after seeing the actual UI (2026-08-20)
+
+Screenshots of wealth.truedata.in changed three things.
+
+### 1. The category is already in our file
+
+`an<date>.txt` lines are `<Company> <SYMBOL> : <CATEGORY> <description>`, where
+CATEGORY is NSE's own subject taxonomy:
+
+    Aurobindo Pharma Limited AUROPHARMA : Acquisition Intimation of incorporation...
+    PG Electroplast Limited PGEL : Monitoring Agency Report ...
+    Ace Integrated Solutions Limited ACEINTEG : Outcome of Board Meeting ...
+    STL Networks Limited STLNETWORK : Copy of Newspaper Publication ...
+
+TrueWealth renders these as `General :: Newspaper Publication`, `Outcome :: AGM`,
+`Intimation :: Board Meeting`. So step 2 of the plan above is cheaper than
+written — a split, not a keyword classifier. Bucket the long tail of NSE
+subjects into a handful of top-level groups and the chips fall out.
+
+### 2. What our file does NOT have
+
+Their feed shows an intraday timestamp per row (14:07:51) and a Download PDF
+link. Ours is an END-OF-DAY DIGEST with neither. Anything claiming to be a live
+feed needs NSE's announcements API, not the daily drop. Worth being clear about
+before promising "real-time" — the daily file supports a searchable archive, not
+a ticker.
+
+### 3. The feature worth copying is the CHART, not the verdict
+
+The company page plots announcement markers (A, B, N) directly on the price
+chart, so a reader sees whether a disclosure moved the stock. That is the actual
+analytical question, it needs no model, and **we already hold both sides**:
+announcements per session and daily bars per symbol.
+
+This is a better first build than sentiment. It is defensible — every marker is
+a real filing on a real date — and it does something the raw feed cannot:
+connect disclosure to reaction. A verdict column asserts what an announcement
+means; a marker on a chart lets the reader see what it did.
+
+Their own AI summary is a per-announcement BUTTON, not a column — the user asks
+for it. Worth noting: even the product built around AI does not assert a
+generated summary on every row unprompted.
+
+### Layout note
+
+Two panes, not tabs: a persistent live feed down the left (announcements OR
+news, switched by an icon rail) with detail on the right. Our app is
+single-pane and tab-switched. Adopting the two-pane shape is a bigger change
+than adding a tab, and should be a deliberate decision rather than a side
+effect of building this.
