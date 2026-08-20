@@ -35,7 +35,7 @@ import { searchCompanies, companyInsider, companyShareholding, companyDrilldown,
 import { corporateActions } from '#india/corporate.js';
 import { usHigh52wEvents, usLow52wEvents, usGainersRecurrence, usLosersRecurrence } from '#us/screens_us.js';
 import { usInsiderRecent, usInsiderNet, usInsiderForSymbol } from '#us/insider_us.js';
-import { usStockFundamentals, usStockPrices, usStockCoverage } from '#us/stock_us.js';
+import { usStockFundamentals, usStockPrices, usStockCoverage, usStockInsider } from '#us/stock_us.js';
 import { getConnection } from '#db.js'; // for the startup warm-up below
 import { getNews, getSitemapNews } from '#india/news.js';
 import { huntBoard } from '#india/hunt.js';
@@ -231,6 +231,9 @@ app.get('/api/us/stock/:symbol/prices', route((req, res) => {
 
 // Per-source coverage, so the page can state ONE honest freshness stamp
 // instead of asserting one it never checked.
+app.get('/api/us/stock/:symbol/insider', route((req) =>
+  usStockInsider(req.params.symbol.toUpperCase())));
+
 app.get('/api/us/stock/:symbol/coverage', route((req) =>
   usStockCoverage(req.params.symbol.toUpperCase())));
 
