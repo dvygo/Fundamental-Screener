@@ -68,3 +68,18 @@ export function usStockCoverage(symbol) {
     SELECT 'yahoo-bars', count(*), max(as_of)::VARCHAR FROM us_prices WHERE symbol = ?
   `, [symbol, symbol, symbol]);
 }
+
+/**
+ * Insider trades for one symbol — the Live lane's answer to the India board's
+ * insider table. Same-day, and includes Form 144 proposed sales the SEC
+ * quarterly bulk does not carry.
+ */
+export function usStockInsider(symbol) {
+  return queryJson(`
+    SELECT trans_date, owner_name, relationship, transaction,
+           shares, price_per_share, value_usd, shares_after, is_proposed
+    FROM us_insider_live
+    WHERE symbol = ?
+    ORDER BY value_usd DESC NULLS LAST
+  `, [symbol]);
+}

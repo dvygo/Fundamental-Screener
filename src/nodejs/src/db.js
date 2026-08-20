@@ -496,6 +496,41 @@ async function createConnection() {
     `);
   }
 
+  // Per-company insider trades, scraped alongside the fundamentals page. This
+  // is the LIVE lane's insider source: same-day, where the SEC bulk lags a
+  // quarter. It also carries Form 144 "Proposed Sale" rows — intent filed
+  // BEFORE a trade — which the quarterly data set does not have at all.
+  if (has(path.join(ROOT, 'data', 'extracts_us', '_meta', 'finviz_insider.parquet'))) {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_insider_live AS
+      SELECT upper(trim(symbol)) AS symbol,
+             trim(insider_trading) AS owner_name,
+             trim(relationship) AS relationship,
+             trim(date) AS trans_date,
+             trim(transaction) AS transaction,
+             -- These arrive already numeric: pandas inferred DOUBLE when the
+             -- scrape was written, so trim()/replace() on them is a type error.
+             TRY_CAST(cost AS DOUBLE) AS price_per_share,
+             TRY_CAST(num_shares AS DOUBLE) AS shares,
+             TRY_CAST(value_usd AS DOUBLE) AS value_usd,
+             TRY_CAST(num_shares_total AS DOUBLE) AS shares_after,
+             -- Form 144 is intent to sell, filed ahead of the trade; Form 4 is
+             -- after the fact. Flagged rather than filtered so a reader can
+             -- weigh a signalled sale differently from a completed one.
+             trim(transaction) = 'Proposed Sale' AS is_proposed
+      FROM read_parquet('${EXTRACTS_US}/_meta/finviz_insider.parquet')
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_insider_live AS
+      SELECT NULL::VARCHAR AS symbol, NULL::VARCHAR AS owner_name,
+             NULL::VARCHAR AS relationship, NULL::VARCHAR AS trans_date,
+             NULL::VARCHAR AS transaction, NULL::DOUBLE AS price_per_share,
+             NULL::DOUBLE AS shares, NULL::DOUBLE AS value_usd,
+             NULL::DOUBLE AS shares_after, NULL::BOOLEAN AS is_proposed WHERE FALSE
+    `);
+  }
+
   // ------------------------------------------------- Insider Centric US (SEC)
   //
   // Forms 3/4/5 from the SEC's quarterly data sets. Unlike the NSE side, which
