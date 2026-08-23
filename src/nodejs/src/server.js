@@ -40,6 +40,10 @@ import {
   secStockProfile, secStockAnnual, secStockFacts,
   secStockFilings, secStockCoverage, secStockBars,
 } from '#us/sec_us.js';
+import {
+  finraShortInterest, finraShortVolume, finraShortVolumeOutliers,
+  finraShortInterestMovers, finraCoverage,
+} from '#us/finra_us.js';
 import { getConnection } from '#db.js'; // for the startup warm-up below
 import { getNews, getSitemapNews } from '#india/news.js';
 import { huntBoard } from '#india/hunt.js';
@@ -283,6 +287,44 @@ app.get('/api/us/sec/:symbol/bars', route((req, res) => {
 
 app.get('/api/us/sec/:symbol/coverage', route((req) =>
   secStockCoverage(req.params.symbol)));
+
+// ------------------------------------------------------ FINRA short data
+//
+// Primary source for finviz's Short Interest / Short Ratio / Short Float.
+// Interest and volume stay on separate paths: one is open positions, the other
+// is a session's flow, and a caller should have to say which it means.
+app.get('/api/us/finra/:symbol/short-interest', route((req, res) => {
+  const limit = intParam(req, res, 'limit', 24);
+  if (limit === null) return null;
+  return finraShortInterest(req.params.symbol, limit);
+}));
+
+app.get('/api/us/finra/:symbol/short-volume', route((req, res) => {
+  const days = intParam(req, res, 'days', 60);
+  if (days === null) return null;
+  return finraShortVolume(req.params.symbol, days);
+}));
+
+app.get('/api/us/finra/:symbol/coverage', route((req) =>
+  finraCoverage(req.params.symbol)));
+
+// Board-level: today's largest deviations from each symbol's own baseline.
+// The floors are parameters rather than constants because the right ones
+// depend on how much history the local store has accumulated.
+app.get('/api/us/finra/short-volume/outliers', route((req, res) => {
+  const minVolume = intParam(req, res, 'min_volume', 1000000);
+  const minSessions = intParam(req, res, 'min_sessions', 10);
+  const limit = intParam(req, res, 'limit', 100);
+  if (minVolume === null || minSessions === null || limit === null) return null;
+  return finraShortVolumeOutliers(minVolume, minSessions, limit);
+}));
+
+app.get('/api/us/finra/short-interest/movers', route((req, res) => {
+  const minInterest = intParam(req, res, 'min_interest', 1000000);
+  const limit = intParam(req, res, 'limit', 100);
+  if (minInterest === null || limit === null) return null;
+  return finraShortInterestMovers(minInterest, limit);
+}));
 
 // Insider Centric US — SEC Forms 3/4/5 (src/python/sec_insider_pull.py).
 // open_market=0 widens to grants, tax withholding and option exercises; the

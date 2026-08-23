@@ -796,6 +796,99 @@ async function createConnection() {
     `);
   }
 
+  // ------------------------------------------------------------- FINRA
+  //
+  // Built by src/python/finra_short_volume.py and finra_short_interest.py.
+  // Both small enough to materialise.
+  //
+  // These are the primary source for what finviz publishes as Short Interest,
+  // Short Ratio and Short Float. Verified on the 2026-07-31 settlement: AAPL
+  // short_interest is 141,606,163 and finviz shows "141.61M". Same number, one
+  // vendor removed, and this one carries the previous period and a settlement
+  // date the grid does not show.
+  const finraVolP = `${EXTRACTS_US}/_meta/finra_short_volume.parquet`;
+  const finraIntP = `${EXTRACTS_US}/_meta/finra_short_interest.parquet`;
+  const usMeta = (name) => path.join(ROOT, 'data', 'extracts_us', '_meta', name);
+
+  // Daily short sale VOLUME — a flow, and off-exchange only (TRF/ADF reported).
+  // Exchange-executed volume is not in it: on 2026-08-21 TSLA showed 28,090,470
+  // here against 14,657,671 on Nasdaq. So total_volume is NOT comparable with
+  // us_prices.volume, and nothing here should be joined to it as though it were.
+  if (has(usMeta('finra_short_volume.parquet'))) {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_finra_short_volume AS
+      SELECT as_of, symbol, short_volume, short_exempt_volume, total_volume, markets,
+             CASE WHEN total_volume > 0
+                  THEN short_volume / total_volume END AS short_ratio
+      FROM read_parquet('${finraVolP}')
+    `);
+
+    // The ratio is meaningless on its own. Median across symbols with real
+    // volume sits at ~0.505 — half of every short sale is a market maker
+    // hedging inventory, not a view on the stock. A screen on "above 50%"
+    // therefore fires on half the market every day.
+    //
+    // So the baseline is each symbol's OWN median, and what callers read is the
+    // deviation from it. Note `sessions`: the catalog page only exposes a
+    // rolling window, so early baselines rest on a handful of days and widen as
+    // the local store accumulates. It is carried per row precisely so a thin
+    // baseline is visible rather than silently trusted.
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_finra_short_baseline AS
+      SELECT symbol,
+             median(short_ratio) AS baseline_ratio,
+             count(*) AS sessions
+      FROM us_finra_short_volume
+      WHERE short_ratio IS NOT NULL AND total_volume > 100000
+      GROUP BY symbol
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_finra_short_volume AS
+      SELECT NULL::DATE AS as_of, NULL::VARCHAR AS symbol, NULL::DOUBLE AS short_volume,
+             NULL::DOUBLE AS short_exempt_volume, NULL::DOUBLE AS total_volume,
+             NULL::VARCHAR AS markets, NULL::DOUBLE AS short_ratio WHERE FALSE
+    `);
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_finra_short_baseline AS
+      SELECT NULL::VARCHAR AS symbol, NULL::DOUBLE AS baseline_ratio,
+             NULL::BIGINT AS sessions WHERE FALSE
+    `);
+  }
+
+  // Biweekly short INTEREST — a stock (open positions), not the flow above.
+  // The two are conflated constantly and answer different questions.
+  //
+  // market_class travels with every row because FINRA's own note says files
+  // before June 2021 carry OTC securities only. We load current files, so the
+  // break does not bite — but a backfill would produce one continuous series
+  // whose universe changes mid-way, and the column is what makes that visible.
+  if (has(usMeta('finra_short_interest.parquet'))) {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_finra_short_interest AS
+      SELECT settlement_date, symbol, issue_name, market_class, exchange_code,
+             short_interest, short_interest_prev, avg_daily_volume,
+             -- 999.99 is a CEILING, not a measurement: 7,825 rows sit exactly
+             -- on it while the largest real value is 998.82, and 7,754 of them
+             -- are OTC issues with no meaningful average volume to divide by.
+             -- Left as a number it sorts to the top of every "hardest to cover"
+             -- view and drags any average with it, so it is nulled here.
+             CASE WHEN days_to_cover < 999.99 THEN days_to_cover END AS days_to_cover,
+             change_pct, change_shares
+      FROM read_parquet('${finraIntP}')
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_finra_short_interest AS
+      SELECT NULL::DATE AS settlement_date, NULL::VARCHAR AS symbol,
+             NULL::VARCHAR AS issue_name, NULL::VARCHAR AS market_class,
+             NULL::VARCHAR AS exchange_code, NULL::DOUBLE AS short_interest,
+             NULL::DOUBLE AS short_interest_prev, NULL::DOUBLE AS avg_daily_volume,
+             NULL::DOUBLE AS days_to_cover, NULL::DOUBLE AS change_pct,
+             NULL::DOUBLE AS change_shares WHERE FALSE
+    `);
+  }
+
   return connection;
 }
 
