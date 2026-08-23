@@ -36,6 +36,10 @@ import { corporateActions } from '#india/corporate.js';
 import { usHigh52wEvents, usLow52wEvents, usGainersRecurrence, usLosersRecurrence } from '#us/screens_us.js';
 import { usInsiderRecent, usInsiderNet, usInsiderForSymbol } from '#us/insider_us.js';
 import { usStockFundamentals, usStockPrices, usStockCoverage, usStockInsider } from '#us/stock_us.js';
+import {
+  secStockProfile, secStockAnnual, secStockFacts,
+  secStockFilings, secStockCoverage, secStockBars,
+} from '#us/sec_us.js';
 import { getConnection } from '#db.js'; // for the startup warm-up below
 import { getNews, getSitemapNews } from '#india/news.js';
 import { huntBoard } from '#india/hunt.js';
@@ -236,6 +240,49 @@ app.get('/api/us/stock/:symbol/insider', route((req) =>
 
 app.get('/api/us/stock/:symbol/coverage', route((req) =>
   usStockCoverage(req.params.symbol.toUpperCase())));
+
+// ---------------------------------------- Stock Centric US (SEC lane)
+//
+// As-filed financials from the EDGAR bulk archives. Separate paths from the
+// Live lane above rather than a `source=` switch on the same routes: the two
+// answer different questions and a caller should have to say which it wants.
+//
+// Every limit and day count goes through intParam. These are interpolated into
+// the SQL (DuckDB will not bind a LIMIT), so a validated integer is the only
+// thing standing between a query string and the query.
+app.get('/api/us/sec/:symbol/profile', route((req) =>
+  secStockProfile(req.params.symbol)));
+
+app.get('/api/us/sec/:symbol/annual', route((req) =>
+  secStockAnnual(req.params.symbol)));
+
+// concept is a bind parameter, not interpolated — it is free text from the URL.
+app.get('/api/us/sec/:symbol/facts', route((req, res) => {
+  const limit = intParam(req, res, 'limit', 200);
+  if (limit === null) return null;
+  const concept = (req.query.concept ?? '').trim();
+  if (!concept) {
+    res.status(400).json({ error: 'concept is required' });
+    return null;
+  }
+  return secStockFacts(req.params.symbol, concept, limit);
+}));
+
+app.get('/api/us/sec/:symbol/filings', route((req, res) => {
+  const limit = intParam(req, res, 'limit', 100);
+  if (limit === null) return null;
+  const form = (req.query.form ?? '').trim() || null;
+  return secStockFilings(req.params.symbol, limit, form);
+}));
+
+app.get('/api/us/sec/:symbol/bars', route((req, res) => {
+  const days = intParam(req, res, 'days', 180);
+  if (days === null) return null;
+  return secStockBars(req.params.symbol, days);
+}));
+
+app.get('/api/us/sec/:symbol/coverage', route((req) =>
+  secStockCoverage(req.params.symbol)));
 
 // Insider Centric US — SEC Forms 3/4/5 (src/python/sec_insider_pull.py).
 // open_market=0 widens to grants, tax withholding and option exercises; the

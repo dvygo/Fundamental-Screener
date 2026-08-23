@@ -629,6 +629,173 @@ async function createConnection() {
     LEFT JOIN sec_owner  o ON o.accession = trim(t.accession_number)
   `);
 
+  // ================================================== SEC bulk archives (US)
+  //
+  // Built by sec_submissions_load.py (the filing index) and
+  // sec_companyfacts_load.py (the numbers inside those filings). They join on
+  // accession number: sec_filings says Apple filed a 10-K on 2009-10-27,
+  // us_sec_facts says net income in it was $3,496,000,000.
+  //
+  // THESE STAY VIEWS, unlike every other US table here.
+  //
+  // Materialising was right for the insider TSVs because read_csv re-parsed
+  // every quarter's rows on each request — 26.7s cold, which the proxy's 25s
+  // budget turned into a broken tab. Parquet is a different animal: columnar,
+  // with per-row-group min/max statistics, and both files were written
+  // clustered by cik (the loaders iterate zero-padded CIK filenames in order).
+  // A `WHERE cik = ?` therefore touches a few row groups rather than the file.
+  // Measured cold on the 125,308,448-row facts file: 0.31s for the first
+  // company, 0.02s after. Copying 125M rows into memory to shave that would
+  // cost gigabytes of RAM for no user-visible gain.
+  const storeFile = (name) => path.join(ROOT, 'data', 'store', name);
+  const secFilersP = `${STORE}/sec_filers.parquet`;
+  const secFilingsP = `${STORE}/sec_filings.parquet`;
+  const secFactsP = `${STORE}/sec_facts.parquet`;
+  const secConceptsP = `${STORE}/sec_concepts.parquet`;
+
+  // Ticker -> CIK, taken from what registrants actually filed rather than a
+  // maintained list. The roster we scraped has already drifted: it carries EQR
+  // for CIK 906107, where the registrant's own submission says VMRK.
+  //
+  // Symbols are normalised to SEC's dash form. The class-share tickers are the
+  // reason — the S&P roster writes BRK.B and BF.B, SEC writes BRK-B and BF-B,
+  // and without this the join silently loses them. Callers must normalise the
+  // incoming symbol the same way.
+  if (has(storeFile('sec_filers.parquet'))) {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_sec_symbol AS
+      WITH exploded AS (
+        SELECT cik, name, exchanges, sic_description,
+               unnest(str_split(tickers, ',')) AS raw_symbol
+        FROM read_parquet('${secFilersP}')
+        WHERE tickers IS NOT NULL AND tickers <> ''
+      )
+      SELECT upper(replace(trim(raw_symbol), '.', '-')) AS symbol,
+             cik, name, exchanges, sic_description
+      FROM exploded
+      WHERE trim(raw_symbol) <> ''
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_sec_symbol AS
+      SELECT NULL::VARCHAR AS symbol, NULL::VARCHAR AS cik, NULL::VARCHAR AS name,
+             NULL::VARCHAR AS exchanges, NULL::VARCHAR AS sic_description WHERE FALSE
+    `);
+  }
+
+  // The filing index. Dates arrive as VARCHAR (the loader keeps the archive's
+  // own strings) and are cast here, not there — TRY_CAST so a malformed date
+  // costs that one column rather than the row.
+  if (has(storeFile('sec_filings.parquet'))) {
+    await connection.run(`
+      CREATE OR REPLACE VIEW us_sec_filings AS
+      SELECT cik,
+             accessionNumber AS accn,
+             TRY_CAST(filingDate AS DATE) AS filed,
+             TRY_CAST(reportDate AS DATE) AS period,
+             form,
+             items,
+             primaryDocument AS document,
+             primaryDocDescription AS document_desc,
+             isXBRL = '1' AS is_xbrl
+      FROM read_parquet('${secFilingsP}')
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE VIEW us_sec_filings AS
+      SELECT NULL::VARCHAR AS cik, NULL::VARCHAR AS accn, NULL::DATE AS filed,
+             NULL::DATE AS period, NULL::VARCHAR AS form, NULL::VARCHAR AS items,
+             NULL::VARCHAR AS document, NULL::VARCHAR AS document_desc,
+             NULL::BOOLEAN AS is_xbrl WHERE FALSE
+    `);
+  }
+
+  // The reported facts. `period_days` is derived here because without it the
+  // table is a trap: a 10-Q reports the SAME concept for the SAME period_end
+  // twice — once for the quarter and once year-to-date. Apple's 2026-07-31
+  // 10-Q carries NetIncomeLoss at both 101,464,000,000 (nine months) and
+  // 29,789,000,000 (the quarter). Picking one without checking the duration
+  // gets you a number that is off by a factor of three and looks plausible.
+  // Instant facts (balance sheet) have no start at all, hence the NULL.
+  if (has(storeFile('sec_facts.parquet'))) {
+    await connection.run(`
+      CREATE OR REPLACE VIEW us_sec_facts AS
+      SELECT cik, taxonomy, concept, unit,
+             start AS period_start,
+             "end" AS period_end,
+             CASE WHEN start IS NOT NULL
+                  THEN date_diff('day', start, "end") END AS period_days,
+             val, fy, fp, form, filed, frame, accn
+      FROM read_parquet('${secFactsP}')
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE VIEW us_sec_facts AS
+      SELECT NULL::VARCHAR AS cik, NULL::VARCHAR AS taxonomy, NULL::VARCHAR AS concept,
+             NULL::VARCHAR AS unit, NULL::DATE AS period_start, NULL::DATE AS period_end,
+             NULL::BIGINT AS period_days, NULL::DOUBLE AS val, NULL::INTEGER AS fy,
+             NULL::VARCHAR AS fp, NULL::VARCHAR AS form, NULL::DATE AS filed,
+             NULL::VARCHAR AS frame, NULL::VARCHAR AS accn WHERE FALSE
+    `);
+  }
+
+  // 14,041 concept labels, split out of the facts by the loader so the prose
+  // is not repeated on 125M rows. Small enough to materialise.
+  if (has(storeFile('sec_concepts.parquet'))) {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_sec_concepts AS
+      SELECT taxonomy, concept, label, description FROM read_parquet('${secConceptsP}')
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_sec_concepts AS
+      SELECT NULL::VARCHAR AS taxonomy, NULL::VARCHAR AS concept,
+             NULL::VARCHAR AS label, NULL::VARCHAR AS description WHERE FALSE
+    `);
+  }
+
+  // ------------------------------------------------------- Databento bars
+  //
+  // Built by src/python/us_databento_load.py. Small enough to materialise.
+  //
+  // EVERY WINDOW PARTITIONS BY series_id, NOT SYMBOL. That is the whole point
+  // of the loader's reuse guard: `IBIT` covers a penny instrument until 2022
+  // and the iShares trust from 2024-01-11, and a 252-day high spanning the two
+  // is meaningless. Partitioning by symbol alone would quietly reintroduce it.
+  //
+  // hi_252d/lo_252d are OUR computation over trailing sessions, not an
+  // exchange's declaration — the same caveat lib/screens-us.ts records for the
+  // Yahoo board. And this is XNAS: Nasdaq-executed volume only, a fraction of
+  // consolidated, so `volume` here is not comparable with us_prices.volume.
+  const dbnP = `${EXTRACTS_US}/_meta/databento_ohlcv.parquet`;
+  if (has(path.join(ROOT, 'data', 'extracts_us', '_meta', 'databento_ohlcv.parquet'))) {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_dbn_prices AS
+      SELECT symbol, series_id, series_symbol, date AS as_of,
+             open, high, low, close, volume, dataset,
+             lag(close) OVER w AS prev_close,
+             CASE WHEN lag(close) OVER w > 0
+                  THEN round((close - lag(close) OVER w) / lag(close) OVER w * 100, 2)
+             END AS pct_change,
+             max(high) OVER w252 AS hi_252d,
+             min(low)  OVER w252 AS lo_252d
+      FROM read_parquet('${dbnP}')
+      WINDOW w AS (PARTITION BY symbol, series_id ORDER BY date),
+             w252 AS (PARTITION BY symbol, series_id ORDER BY date
+                      ROWS BETWEEN 251 PRECEDING AND CURRENT ROW)
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_dbn_prices AS
+      SELECT NULL::VARCHAR AS symbol, NULL::BIGINT AS series_id,
+             NULL::VARCHAR AS series_symbol, NULL::DATE AS as_of,
+             NULL::DOUBLE AS open, NULL::DOUBLE AS high, NULL::DOUBLE AS low,
+             NULL::DOUBLE AS close, NULL::DOUBLE AS volume, NULL::VARCHAR AS dataset,
+             NULL::DOUBLE AS prev_close, NULL::DOUBLE AS pct_change,
+             NULL::DOUBLE AS hi_252d, NULL::DOUBLE AS lo_252d WHERE FALSE
+    `);
+  }
+
   return connection;
 }
 
