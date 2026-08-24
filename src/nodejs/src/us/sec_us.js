@@ -196,7 +196,7 @@ export function secStockCoverage(symbol) {
  */
 export function secStockBars(symbol, days) {
   return queryJson(`
-    SELECT as_of, series_symbol, open, high, low, close, volume,
+    SELECT as_of, series_symbol, open, high, low, close, adj_close, volume,
            pct_change, hi_252d, lo_252d, dataset
     FROM us_dbn_prices
     WHERE symbol = ?

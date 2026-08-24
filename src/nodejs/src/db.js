@@ -385,6 +385,35 @@ async function createConnection() {
     FROM read_csv('${usRoster}', header=true, all_varchar=true, normalize_names=true)
   `);
 
+  // Confirmed stock splits only. Built by src/python/us_stock_splits_detect.py:
+  // cross-validates SEC shares-outstanding jumps against Databento's own price
+  // series, and writes ratio=NULL for anything it could not independently
+  // confirm rather than guessing. Only 'confirmed' rows are loaded here — an
+  // unconfirmed candidate must never adjust a real price.
+  //
+  // Small (927 confirmed rows against a full market), materialised as a TABLE
+  // so both us_daily and us_dbn_prices below can join it without re-reading
+  // the source Parquet's confidence column repeatedly.
+  const splitsFile = path.join(ROOT, 'data', 'store', 'us_stock_splits.parquet');
+  const splitsP = `${STORE}/us_stock_splits.parquet`;
+  // fsSync.existsSync directly, not the has() helper — that is declared later
+  // in this function (Stock Centric US Live lane section) and this table is
+  // built earlier, before has() exists in scope.
+  if (fsSync.existsSync(splitsFile)) {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_stock_splits AS
+      SELECT symbol, cik, effective_date::DATE AS effective_date, ratio
+      FROM read_parquet('${splitsP}')
+      WHERE confidence = 'confirmed'
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_stock_splits AS
+      SELECT NULL::VARCHAR AS symbol, NULL::VARCHAR AS cik,
+             NULL::DATE AS effective_date, NULL::DOUBLE AS ratio WHERE FALSE
+    `);
+  }
+
   // One row per (session, symbol). DATABENTO ONLY.
   //
   // Yahoo is no longer a bulk source for this table. It is an on-demand fetch
@@ -402,9 +431,22 @@ async function createConnection() {
   // repopulated from Yahoo. A board showing nothing is honest; a board showing
   // a different feed under the same column headings is not.
   //
-  // adj_close / dividends / stock_splits exist for shape compatibility and are
-  // always NULL: OHLCV carries no corporate-action data. Null rather than zero,
-  // so "no split that day" and "this feed cannot tell you" stay distinct.
+  // adj_open/adj_high/adj_low/adj_close ARE REAL NOW, computed from
+  // us_stock_splits. Raw open/high/low/close are left untouched beside them —
+  // never mutated, same principle as companyfacts restatements — so a caller
+  // can audit the adjustment by comparing the two directly.
+  //
+  // cum_factor is exp(sum(ln(ratio))), not a PRODUCT aggregate: DuckDB has no
+  // built-in product(). Ratios are always > 0 (real close/close prints), so
+  // the log-sum-exp identity is exact. It multiplies every bar strictly BEFORE
+  // a confirmed split's effective_date by that split's ratio (and by every
+  // later split's ratio too, compounding) — bars on or after the last split
+  // get factor 1, i.e. raw == adjusted, matching the current share count.
+  //
+  // stock_splits carries the ratio on its OWN effective date, NULL elsewhere —
+  // NULL, not 0. The detector has real coverage gaps (history before
+  // Databento's 2018-05-01 start, unmapped tickers), so "we found no confirmed
+  // split here" is not the same claim as "we verified none happened."
   const dbnBarsFile = path.join(ROOT, 'data', 'extracts_us', '_meta', 'databento_ohlcv.parquet');
   const dbnBars = `${EXTRACTS_US}/_meta/databento_ohlcv.parquet`;
 
@@ -414,20 +456,38 @@ async function createConnection() {
       -- series_id survives into this table: it is what keeps a reused ticker's
       -- two instruments apart, and dropping it here would undo the loader's
       -- guard the moment a window function partitions by symbol alone.
-      SELECT date::date AS as_of, symbol, series_id,
-             open, high, low, close,
-             NULL::DOUBLE AS adj_close, volume,
-             NULL::DOUBLE AS dividends, NULL::DOUBLE AS stock_splits,
+      WITH raw AS (
+        SELECT date::date AS as_of, symbol, series_id, open, high, low, close, volume
+        FROM read_parquet('${dbnBars}')
+        WHERE date IS NOT NULL AND close IS NOT NULL
+      ),
+      factor AS (
+        SELECT r.symbol, r.as_of, exp(sum(ln(s.ratio))) AS cum_factor
+        FROM raw r
+        JOIN us_stock_splits s ON s.symbol = r.symbol AND s.effective_date > r.as_of
+        GROUP BY r.symbol, r.as_of
+      )
+      SELECT r.as_of, r.symbol, r.series_id,
+             r.open, r.high, r.low, r.close,
+             r.close * COALESCE(f.cum_factor, 1.0) AS adj_close,
+             r.open  * COALESCE(f.cum_factor, 1.0) AS adj_open,
+             r.high  * COALESCE(f.cum_factor, 1.0) AS adj_high,
+             r.low   * COALESCE(f.cum_factor, 1.0) AS adj_low,
+             r.volume,
+             NULL::DOUBLE AS dividends,
+             sp.ratio AS stock_splits,
              'databento' AS source
-      FROM read_parquet('${dbnBars}')
-      WHERE date IS NOT NULL AND close IS NOT NULL
+      FROM raw r
+      LEFT JOIN factor f ON f.symbol = r.symbol AND f.as_of = r.as_of
+      LEFT JOIN us_stock_splits sp ON sp.symbol = r.symbol AND sp.effective_date = r.as_of
     `);
   } else {
     await connection.run(`
       CREATE OR REPLACE TABLE us_daily AS
       SELECT NULL::DATE AS as_of, NULL::VARCHAR AS symbol, NULL::BIGINT AS series_id,
              NULL::DOUBLE AS open, NULL::DOUBLE AS high, NULL::DOUBLE AS low,
-             NULL::DOUBLE AS close, NULL::DOUBLE AS adj_close, NULL::DOUBLE AS volume,
+             NULL::DOUBLE AS close, NULL::DOUBLE AS adj_close, NULL::DOUBLE AS adj_open,
+             NULL::DOUBLE AS adj_high, NULL::DOUBLE AS adj_low, NULL::DOUBLE AS volume,
              NULL::DOUBLE AS dividends, NULL::DOUBLE AS stock_splits,
              NULL::VARCHAR AS source WHERE FALSE
     `);
@@ -444,13 +504,22 @@ async function createConnection() {
     CREATE OR REPLACE TABLE us_prices AS
     SELECT
       as_of, symbol, series_id, source,
-      open, high, low, close, adj_close, volume,
-      lag(close) OVER w AS prev_close,
-      CASE WHEN lag(close) OVER w > 0
-           THEN round((close - lag(close) OVER w) / lag(close) OVER w * 100, 4)
+      open, high, low, close, adj_open, adj_high, adj_low, adj_close, volume,
+      -- prev_close, pct_change, hi_52w, lo_52w are computed off ADJUSTED
+      -- values, not raw. Raw stays exposed alongside for audit, but a
+      -- 52-week high computed on raw prices across a split boundary is not a
+      -- real record: verified against NVDA's actual 2024-06-10 10-for-1 split,
+      -- the raw hi_252d read ~$1,255 for a full year afterward while the stock
+      -- traded at $128-144 -- an unreachable ceiling that silently kept the
+      -- 52-week-high screen from ever firing for it. See
+      -- src/python/us_stock_splits_detect.py and
+      -- context/proposals/us-source-lanes.md for the full finding.
+      lag(adj_close) OVER w AS prev_close,
+      CASE WHEN lag(adj_close) OVER w > 0
+           THEN round((adj_close - lag(adj_close) OVER w) / lag(adj_close) OVER w * 100, 4)
       END AS pct_change,
-      max(high) OVER w52 AS hi_52w,
-      min(low)  OVER w52 AS lo_52w,
+      max(adj_high) OVER w52 AS hi_52w,
+      min(adj_low)  OVER w52 AS lo_52w,
       count(*)  OVER w52 AS sessions_seen
     FROM us_daily
     -- PARTITION BY (symbol, series_id), never symbol alone. A reused ticker
@@ -804,17 +873,42 @@ async function createConnection() {
   if (has(path.join(ROOT, 'data', 'extracts_us', '_meta', 'databento_ohlcv.parquet'))) {
     await connection.run(`
       CREATE OR REPLACE TABLE us_dbn_prices AS
-      SELECT symbol, series_id, series_symbol, date AS as_of,
-             open, high, low, close, volume, dataset,
-             lag(close) OVER w AS prev_close,
-             CASE WHEN lag(close) OVER w > 0
-                  THEN round((close - lag(close) OVER w) / lag(close) OVER w * 100, 2)
+      -- Same split-adjustment as us_daily above, against the same
+      -- us_stock_splits table -- this and us_daily read the identical source
+      -- Parquet but serve different consumers (Markets US vs the Archive
+      -- lane's per-symbol bars), so the fix has to land in both.
+      WITH raw AS (
+        SELECT symbol, series_id, series_symbol, date AS as_of,
+               open, high, low, close, volume, dataset
+        FROM read_parquet('${dbnP}')
+      ),
+      factor AS (
+        SELECT r.symbol, r.as_of, exp(sum(ln(s.ratio))) AS cum_factor
+        FROM raw r
+        JOIN us_stock_splits s ON s.symbol = r.symbol AND s.effective_date > r.as_of
+        GROUP BY r.symbol, r.as_of
+      ),
+      adjusted AS (
+        SELECT r.*,
+               r.close * COALESCE(f.cum_factor, 1.0) AS adj_close,
+               r.open  * COALESCE(f.cum_factor, 1.0) AS adj_open,
+               r.high  * COALESCE(f.cum_factor, 1.0) AS adj_high,
+               r.low   * COALESCE(f.cum_factor, 1.0) AS adj_low
+        FROM raw r
+        LEFT JOIN factor f ON f.symbol = r.symbol AND f.as_of = r.as_of
+      )
+      SELECT symbol, series_id, series_symbol, as_of,
+             open, high, low, close, adj_open, adj_high, adj_low, adj_close,
+             volume, dataset,
+             lag(adj_close) OVER w AS prev_close,
+             CASE WHEN lag(adj_close) OVER w > 0
+                  THEN round((adj_close - lag(adj_close) OVER w) / lag(adj_close) OVER w * 100, 2)
              END AS pct_change,
-             max(high) OVER w252 AS hi_252d,
-             min(low)  OVER w252 AS lo_252d
-      FROM read_parquet('${dbnP}')
-      WINDOW w AS (PARTITION BY symbol, series_id ORDER BY date),
-             w252 AS (PARTITION BY symbol, series_id ORDER BY date
+             max(adj_high) OVER w252 AS hi_252d,
+             min(adj_low)  OVER w252 AS lo_252d
+      FROM adjusted
+      WINDOW w AS (PARTITION BY symbol, series_id ORDER BY as_of),
+             w252 AS (PARTITION BY symbol, series_id ORDER BY as_of
                       ROWS BETWEEN 251 PRECEDING AND CURRENT ROW)
     `);
   } else {
@@ -823,7 +917,10 @@ async function createConnection() {
       SELECT NULL::VARCHAR AS symbol, NULL::BIGINT AS series_id,
              NULL::VARCHAR AS series_symbol, NULL::DATE AS as_of,
              NULL::DOUBLE AS open, NULL::DOUBLE AS high, NULL::DOUBLE AS low,
-             NULL::DOUBLE AS close, NULL::DOUBLE AS volume, NULL::VARCHAR AS dataset,
+             NULL::DOUBLE AS close,
+             NULL::DOUBLE AS adj_open, NULL::DOUBLE AS adj_high,
+             NULL::DOUBLE AS adj_low, NULL::DOUBLE AS adj_close,
+             NULL::DOUBLE AS volume, NULL::VARCHAR AS dataset,
              NULL::DOUBLE AS prev_close, NULL::DOUBLE AS pct_change,
              NULL::DOUBLE AS hi_252d, NULL::DOUBLE AS lo_252d WHERE FALSE
     `);
