@@ -363,7 +363,10 @@ async function createConnection() {
   // query still paid the full parse — 26s, past the Vercel proxy's 25s budget,
   // which surfaced as a 502 in production rather than merely a slow page.
   // Materialising moves it into the warm-up where it is paid once.
-  const usBars = `${EXTRACTS_US}/*/sp500_bars_*.csv`;
+  // No usBars glob any more: data/extracts_us/<YYYYMMDD>/sp500_bars_*.csv is no
+  // longer read. Databento backs us_daily and Yahoo is an on-demand fetch, so
+  // those 1,257 day folders are history on disk that nothing queries. Dropping
+  // the glob is most of why startup fell from 10.6s to 8.3s.
   const usRoster = `${EXTRACTS_US}/_meta/sp500_constituents.csv`;
 
   await connection.run(`
@@ -382,31 +385,53 @@ async function createConnection() {
     FROM read_csv('${usRoster}', header=true, all_varchar=true, normalize_names=true)
   `);
 
-  // One row per (session, symbol), every field yfinance returned. as_of comes
-  // from the folder, matching the NSE convention rather than trusting the Date
-  // column, so a mis-split file can't claim another session's date.
-  await connection.run(`
-    CREATE OR REPLACE TABLE us_daily AS
-    SELECT * FROM (
-      -- b._close, not b.close: normalize_names prefixes an underscore when a
-      -- column name collides with a reserved word, so Yahoo's "Close" arrives
-      -- as _close. Same trap as NSE's SECURITY -> _security in gl_symbol.
-      -- Columns are alias-qualified so DuckDB's lateral aliasing can't resolve
-      -- a bare source name to the output alias being defined beside it.
-      SELECT try_strptime(${FOLDER_DATE('b.filename')}, '%Y%m%d')::date AS as_of,
-             trim(b.symbol) AS symbol,
-             TRY_CAST(b.open AS DOUBLE) AS open,
-             TRY_CAST(b.high AS DOUBLE) AS high,
-             TRY_CAST(b.low AS DOUBLE) AS low,
-             TRY_CAST(b._close AS DOUBLE) AS close,
-             TRY_CAST(b.adj_close AS DOUBLE) AS adj_close,
-             TRY_CAST(b.volume AS DOUBLE) AS volume,
-             TRY_CAST(b.dividends AS DOUBLE) AS dividends,
-             TRY_CAST(b.stock_splits AS DOUBLE) AS stock_splits
-      FROM read_csv('${usBars}', header=true, all_varchar=true, normalize_names=true,
-                    filename=true, union_by_name=true) b
-    ) WHERE as_of IS NOT NULL AND close IS NOT NULL
-  `);
+  // One row per (session, symbol). DATABENTO ONLY.
+  //
+  // Yahoo is no longer a bulk source for this table. It is an on-demand fetch
+  // for symbols Databento does not carry, so it never lands in the stored
+  // history and never sits beside a Databento row in the same window. That
+  // matters because the two are not the same measurement: Databento's close is
+  // the last Nasdaq-executed trade and its volume is Nasdaq-executed only,
+  // where Yahoo's are consolidated. Blending them would make a volume-ranked
+  // screen rank the feed rather than the activity.
+  //
+  // The old data/extracts_us/<YYYYMMDD>/sp500_bars_*.csv folders are therefore
+  // NOT read here any more. They stay on disk as history; nothing queries them.
+  //
+  // If the Databento parquet is absent this table is EMPTY, not silently
+  // repopulated from Yahoo. A board showing nothing is honest; a board showing
+  // a different feed under the same column headings is not.
+  //
+  // adj_close / dividends / stock_splits exist for shape compatibility and are
+  // always NULL: OHLCV carries no corporate-action data. Null rather than zero,
+  // so "no split that day" and "this feed cannot tell you" stay distinct.
+  const dbnBarsFile = path.join(ROOT, 'data', 'extracts_us', '_meta', 'databento_ohlcv.parquet');
+  const dbnBars = `${EXTRACTS_US}/_meta/databento_ohlcv.parquet`;
+
+  if (fsSync.existsSync(dbnBarsFile)) {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_daily AS
+      -- series_id survives into this table: it is what keeps a reused ticker's
+      -- two instruments apart, and dropping it here would undo the loader's
+      -- guard the moment a window function partitions by symbol alone.
+      SELECT date::date AS as_of, symbol, series_id,
+             open, high, low, close,
+             NULL::DOUBLE AS adj_close, volume,
+             NULL::DOUBLE AS dividends, NULL::DOUBLE AS stock_splits,
+             'databento' AS source
+      FROM read_parquet('${dbnBars}')
+      WHERE date IS NOT NULL AND close IS NOT NULL
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_daily AS
+      SELECT NULL::DATE AS as_of, NULL::VARCHAR AS symbol, NULL::BIGINT AS series_id,
+             NULL::DOUBLE AS open, NULL::DOUBLE AS high, NULL::DOUBLE AS low,
+             NULL::DOUBLE AS close, NULL::DOUBLE AS adj_close, NULL::DOUBLE AS volume,
+             NULL::DOUBLE AS dividends, NULL::DOUBLE AS stock_splits,
+             NULL::VARCHAR AS source WHERE FALSE
+    `);
+  }
 
   // Derived per-session move + trailing 52-week extremes.
   //
@@ -418,7 +443,8 @@ async function createConnection() {
   await connection.run(`
     CREATE OR REPLACE TABLE us_prices AS
     SELECT
-      as_of, symbol, open, high, low, close, adj_close, volume,
+      as_of, symbol, series_id, source,
+      open, high, low, close, adj_close, volume,
       lag(close) OVER w AS prev_close,
       CASE WHEN lag(close) OVER w > 0
            THEN round((close - lag(close) OVER w) / lag(close) OVER w * 100, 4)
@@ -427,9 +453,16 @@ async function createConnection() {
       min(low)  OVER w52 AS lo_52w,
       count(*)  OVER w52 AS sessions_seen
     FROM us_daily
+    -- PARTITION BY (symbol, series_id), never symbol alone. A reused ticker
+    -- holds two unrelated instruments under one symbol — IBIT is a penny stock
+    -- until 2022 and the iShares trust from 2024-01-11 — and a window spanning
+    -- the seam would produce a 52-week high drawn from a different company.
+    -- The loader detects the seam; this is where that work is either honoured
+    -- or silently thrown away.
     WINDOW
-      w   AS (PARTITION BY symbol ORDER BY as_of),
-      w52 AS (PARTITION BY symbol ORDER BY as_of ROWS BETWEEN 251 PRECEDING AND CURRENT ROW)
+      w   AS (PARTITION BY symbol, series_id ORDER BY as_of),
+      w52 AS (PARTITION BY symbol, series_id ORDER BY as_of
+              ROWS BETWEEN 251 PRECEDING AND CURRENT ROW)
   `);
 
   // Gainers/losers per session, ranked. The tiebreaker on symbol is deliberate:
@@ -628,6 +661,266 @@ async function createConnection() {
     JOIN sec_submission s ON s.accession = trim(t.accession_number)
     LEFT JOIN sec_owner  o ON o.accession = trim(t.accession_number)
   `);
+
+  // ================================================== SEC bulk archives (US)
+  //
+  // Built by sec_submissions_load.py (the filing index) and
+  // sec_companyfacts_load.py (the numbers inside those filings). They join on
+  // accession number: sec_filings says Apple filed a 10-K on 2009-10-27,
+  // us_sec_facts says net income in it was $3,496,000,000.
+  //
+  // THESE STAY VIEWS, unlike every other US table here.
+  //
+  // Materialising was right for the insider TSVs because read_csv re-parsed
+  // every quarter's rows on each request — 26.7s cold, which the proxy's 25s
+  // budget turned into a broken tab. Parquet is a different animal: columnar,
+  // with per-row-group min/max statistics, and both files were written
+  // clustered by cik (the loaders iterate zero-padded CIK filenames in order).
+  // A `WHERE cik = ?` therefore touches a few row groups rather than the file.
+  // Measured cold on the 125,308,448-row facts file: 0.31s for the first
+  // company, 0.02s after. Copying 125M rows into memory to shave that would
+  // cost gigabytes of RAM for no user-visible gain.
+  const storeFile = (name) => path.join(ROOT, 'data', 'store', name);
+  const secFilersP = `${STORE}/sec_filers.parquet`;
+  const secFilingsP = `${STORE}/sec_filings.parquet`;
+  const secFactsP = `${STORE}/sec_facts.parquet`;
+  const secConceptsP = `${STORE}/sec_concepts.parquet`;
+
+  // Ticker -> CIK, taken from what registrants actually filed rather than a
+  // maintained list. The roster we scraped has already drifted: it carries EQR
+  // for CIK 906107, where the registrant's own submission says VMRK.
+  //
+  // Symbols are normalised to SEC's dash form. The class-share tickers are the
+  // reason — the S&P roster writes BRK.B and BF.B, SEC writes BRK-B and BF-B,
+  // and without this the join silently loses them. Callers must normalise the
+  // incoming symbol the same way.
+  if (has(storeFile('sec_filers.parquet'))) {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_sec_symbol AS
+      WITH exploded AS (
+        SELECT cik, name, exchanges, sic_description,
+               unnest(str_split(tickers, ',')) AS raw_symbol
+        FROM read_parquet('${secFilersP}')
+        WHERE tickers IS NOT NULL AND tickers <> ''
+      )
+      SELECT upper(replace(trim(raw_symbol), '.', '-')) AS symbol,
+             cik, name, exchanges, sic_description
+      FROM exploded
+      WHERE trim(raw_symbol) <> ''
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_sec_symbol AS
+      SELECT NULL::VARCHAR AS symbol, NULL::VARCHAR AS cik, NULL::VARCHAR AS name,
+             NULL::VARCHAR AS exchanges, NULL::VARCHAR AS sic_description WHERE FALSE
+    `);
+  }
+
+  // The filing index. Dates arrive as VARCHAR (the loader keeps the archive's
+  // own strings) and are cast here, not there — TRY_CAST so a malformed date
+  // costs that one column rather than the row.
+  if (has(storeFile('sec_filings.parquet'))) {
+    await connection.run(`
+      CREATE OR REPLACE VIEW us_sec_filings AS
+      SELECT cik,
+             accessionNumber AS accn,
+             TRY_CAST(filingDate AS DATE) AS filed,
+             TRY_CAST(reportDate AS DATE) AS period,
+             form,
+             items,
+             primaryDocument AS document,
+             primaryDocDescription AS document_desc,
+             isXBRL = '1' AS is_xbrl
+      FROM read_parquet('${secFilingsP}')
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE VIEW us_sec_filings AS
+      SELECT NULL::VARCHAR AS cik, NULL::VARCHAR AS accn, NULL::DATE AS filed,
+             NULL::DATE AS period, NULL::VARCHAR AS form, NULL::VARCHAR AS items,
+             NULL::VARCHAR AS document, NULL::VARCHAR AS document_desc,
+             NULL::BOOLEAN AS is_xbrl WHERE FALSE
+    `);
+  }
+
+  // The reported facts. `period_days` is derived here because without it the
+  // table is a trap: a 10-Q reports the SAME concept for the SAME period_end
+  // twice — once for the quarter and once year-to-date. Apple's 2026-07-31
+  // 10-Q carries NetIncomeLoss at both 101,464,000,000 (nine months) and
+  // 29,789,000,000 (the quarter). Picking one without checking the duration
+  // gets you a number that is off by a factor of three and looks plausible.
+  // Instant facts (balance sheet) have no start at all, hence the NULL.
+  if (has(storeFile('sec_facts.parquet'))) {
+    await connection.run(`
+      CREATE OR REPLACE VIEW us_sec_facts AS
+      SELECT cik, taxonomy, concept, unit,
+             start AS period_start,
+             "end" AS period_end,
+             CASE WHEN start IS NOT NULL
+                  THEN date_diff('day', start, "end") END AS period_days,
+             val, fy, fp, form, filed, frame, accn
+      FROM read_parquet('${secFactsP}')
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE VIEW us_sec_facts AS
+      SELECT NULL::VARCHAR AS cik, NULL::VARCHAR AS taxonomy, NULL::VARCHAR AS concept,
+             NULL::VARCHAR AS unit, NULL::DATE AS period_start, NULL::DATE AS period_end,
+             NULL::BIGINT AS period_days, NULL::DOUBLE AS val, NULL::INTEGER AS fy,
+             NULL::VARCHAR AS fp, NULL::VARCHAR AS form, NULL::DATE AS filed,
+             NULL::VARCHAR AS frame, NULL::VARCHAR AS accn WHERE FALSE
+    `);
+  }
+
+  // 14,041 concept labels, split out of the facts by the loader so the prose
+  // is not repeated on 125M rows. Small enough to materialise.
+  if (has(storeFile('sec_concepts.parquet'))) {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_sec_concepts AS
+      SELECT taxonomy, concept, label, description FROM read_parquet('${secConceptsP}')
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_sec_concepts AS
+      SELECT NULL::VARCHAR AS taxonomy, NULL::VARCHAR AS concept,
+             NULL::VARCHAR AS label, NULL::VARCHAR AS description WHERE FALSE
+    `);
+  }
+
+  // ------------------------------------------------------- Databento bars
+  //
+  // Built by src/python/us_databento_load.py. Small enough to materialise.
+  //
+  // EVERY WINDOW PARTITIONS BY series_id, NOT SYMBOL. That is the whole point
+  // of the loader's reuse guard: `IBIT` covers a penny instrument until 2022
+  // and the iShares trust from 2024-01-11, and a 252-day high spanning the two
+  // is meaningless. Partitioning by symbol alone would quietly reintroduce it.
+  //
+  // hi_252d/lo_252d are OUR computation over trailing sessions, not an
+  // exchange's declaration — the same caveat lib/screens-us.ts records for the
+  // Yahoo board. And this is XNAS: Nasdaq-executed volume only, a fraction of
+  // consolidated, so `volume` here is not comparable with us_prices.volume.
+  const dbnP = `${EXTRACTS_US}/_meta/databento_ohlcv.parquet`;
+  if (has(path.join(ROOT, 'data', 'extracts_us', '_meta', 'databento_ohlcv.parquet'))) {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_dbn_prices AS
+      SELECT symbol, series_id, series_symbol, date AS as_of,
+             open, high, low, close, volume, dataset,
+             lag(close) OVER w AS prev_close,
+             CASE WHEN lag(close) OVER w > 0
+                  THEN round((close - lag(close) OVER w) / lag(close) OVER w * 100, 2)
+             END AS pct_change,
+             max(high) OVER w252 AS hi_252d,
+             min(low)  OVER w252 AS lo_252d
+      FROM read_parquet('${dbnP}')
+      WINDOW w AS (PARTITION BY symbol, series_id ORDER BY date),
+             w252 AS (PARTITION BY symbol, series_id ORDER BY date
+                      ROWS BETWEEN 251 PRECEDING AND CURRENT ROW)
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_dbn_prices AS
+      SELECT NULL::VARCHAR AS symbol, NULL::BIGINT AS series_id,
+             NULL::VARCHAR AS series_symbol, NULL::DATE AS as_of,
+             NULL::DOUBLE AS open, NULL::DOUBLE AS high, NULL::DOUBLE AS low,
+             NULL::DOUBLE AS close, NULL::DOUBLE AS volume, NULL::VARCHAR AS dataset,
+             NULL::DOUBLE AS prev_close, NULL::DOUBLE AS pct_change,
+             NULL::DOUBLE AS hi_252d, NULL::DOUBLE AS lo_252d WHERE FALSE
+    `);
+  }
+
+  // ------------------------------------------------------------- FINRA
+  //
+  // Built by src/python/finra_short_volume.py and finra_short_interest.py.
+  // Both small enough to materialise.
+  //
+  // These are the primary source for what finviz publishes as Short Interest,
+  // Short Ratio and Short Float. Verified on the 2026-07-31 settlement: AAPL
+  // short_interest is 141,606,163 and finviz shows "141.61M". Same number, one
+  // vendor removed, and this one carries the previous period and a settlement
+  // date the grid does not show.
+  const finraVolP = `${EXTRACTS_US}/_meta/finra_short_volume.parquet`;
+  const finraIntP = `${EXTRACTS_US}/_meta/finra_short_interest.parquet`;
+  const usMeta = (name) => path.join(ROOT, 'data', 'extracts_us', '_meta', name);
+
+  // Daily short sale VOLUME — a flow, and off-exchange only (TRF/ADF reported).
+  // Exchange-executed volume is not in it: on 2026-08-21 TSLA showed 28,090,470
+  // here against 14,657,671 on Nasdaq. So total_volume is NOT comparable with
+  // us_prices.volume, and nothing here should be joined to it as though it were.
+  if (has(usMeta('finra_short_volume.parquet'))) {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_finra_short_volume AS
+      SELECT as_of, symbol, short_volume, short_exempt_volume, total_volume, markets,
+             CASE WHEN total_volume > 0
+                  THEN short_volume / total_volume END AS short_ratio
+      FROM read_parquet('${finraVolP}')
+    `);
+
+    // The ratio is meaningless on its own. Median across symbols with real
+    // volume sits at ~0.505 — half of every short sale is a market maker
+    // hedging inventory, not a view on the stock. A screen on "above 50%"
+    // therefore fires on half the market every day.
+    //
+    // So the baseline is each symbol's OWN median, and what callers read is the
+    // deviation from it. Note `sessions`: the catalog page only exposes a
+    // rolling window, so early baselines rest on a handful of days and widen as
+    // the local store accumulates. It is carried per row precisely so a thin
+    // baseline is visible rather than silently trusted.
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_finra_short_baseline AS
+      SELECT symbol,
+             median(short_ratio) AS baseline_ratio,
+             count(*) AS sessions
+      FROM us_finra_short_volume
+      WHERE short_ratio IS NOT NULL AND total_volume > 100000
+      GROUP BY symbol
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_finra_short_volume AS
+      SELECT NULL::DATE AS as_of, NULL::VARCHAR AS symbol, NULL::DOUBLE AS short_volume,
+             NULL::DOUBLE AS short_exempt_volume, NULL::DOUBLE AS total_volume,
+             NULL::VARCHAR AS markets, NULL::DOUBLE AS short_ratio WHERE FALSE
+    `);
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_finra_short_baseline AS
+      SELECT NULL::VARCHAR AS symbol, NULL::DOUBLE AS baseline_ratio,
+             NULL::BIGINT AS sessions WHERE FALSE
+    `);
+  }
+
+  // Biweekly short INTEREST — a stock (open positions), not the flow above.
+  // The two are conflated constantly and answer different questions.
+  //
+  // market_class travels with every row because FINRA's own note says files
+  // before June 2021 carry OTC securities only. We load current files, so the
+  // break does not bite — but a backfill would produce one continuous series
+  // whose universe changes mid-way, and the column is what makes that visible.
+  if (has(usMeta('finra_short_interest.parquet'))) {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_finra_short_interest AS
+      SELECT settlement_date, symbol, issue_name, market_class, exchange_code,
+             short_interest, short_interest_prev, avg_daily_volume,
+             -- 999.99 is a CEILING, not a measurement: 7,825 rows sit exactly
+             -- on it while the largest real value is 998.82, and 7,754 of them
+             -- are OTC issues with no meaningful average volume to divide by.
+             -- Left as a number it sorts to the top of every "hardest to cover"
+             -- view and drags any average with it, so it is nulled here.
+             CASE WHEN days_to_cover < 999.99 THEN days_to_cover END AS days_to_cover,
+             change_pct, change_shares
+      FROM read_parquet('${finraIntP}')
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_finra_short_interest AS
+      SELECT NULL::DATE AS settlement_date, NULL::VARCHAR AS symbol,
+             NULL::VARCHAR AS issue_name, NULL::VARCHAR AS market_class,
+             NULL::VARCHAR AS exchange_code, NULL::DOUBLE AS short_interest,
+             NULL::DOUBLE AS short_interest_prev, NULL::DOUBLE AS avg_daily_volume,
+             NULL::DOUBLE AS days_to_cover, NULL::DOUBLE AS change_pct,
+             NULL::DOUBLE AS change_shares WHERE FALSE
+    `);
+  }
 
   return connection;
 }

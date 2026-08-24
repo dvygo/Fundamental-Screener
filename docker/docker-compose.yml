@@ -1,10 +1,34 @@
 name: fundamental-screener
 
-# Storage + audit layer for the screener.
-#   minio       S3-compatible object store (the buckets live here)
-#   minio-init  one-shot: creates buckets, turns on versioning, locks raw/ WORM
-# Delta tables are written into the delta/ bucket and queried with DuckDB in
-# process (src/lake.py) — no Trino/Spark cluster at this scale.
+# MinIO — the WORM audit layer, plus storage for the DuckLake lakehouse.
+#
+# delta/ IS GONE, DELIBERATELY
+#   This file used to provision a delta/ bucket for Delta Lake tables, queried
+#   in-process by a src/lake.py that was never written. DuckLake supersedes that
+#   plan: it is DuckDB-native, so it needs no second engine, and it reached 1.0
+#   in April 2026. The lake/ bucket below replaces delta/. Nothing was migrated
+#   because nothing was ever written there.
+#
+# TWO BUCKETS, AND THE DIFFERENCE IS LOAD-BEARING
+#
+#   raw/   Object-locked and versioned. Source drops land here and can never be
+#          silently altered: NSE zips, the SEC bulk archives, FINRA files. This
+#          is what lets the methodology doc claim the inputs are unmodified,
+#          rather than asking a reader to take our word for it.
+#
+#   lake/  NOT locked. DuckLake owns this bucket and must be able to rewrite
+#          and expire its own Parquet files during compaction and snapshot
+#          expiry. Object-locking it would break that cleanup and leave the
+#          lake growing without bound. Immutability here comes from DuckLake's
+#          snapshots, not from the storage layer.
+#
+# RETENTION MODE — read before switching to COMPLIANCE
+#   GOVERNANCE lets a user with s3:BypassGovernanceRetention delete an object.
+#   COMPLIANCE lets NOBODY delete it before expiry — not an admin, not root,
+#   not by deleting the bucket. With RAW_RETENTION_DAYS at 3650 that commits
+#   the disk for ten years. context/storage.md specifies COMPLIANCE as the
+#   production intent; .env.example ships GOVERNANCE so a first run on a
+#   workstation is recoverable.
 
 services:
   minio:
@@ -12,24 +36,24 @@ services:
     container_name: fs-minio
     command: server /data --console-address ":9001"
     ports:
-      - "9000:9000" # S3 API
-      - "9001:9001" # web console
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # console
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     volumes:
       - minio-data:/data
     healthcheck:
+      # The init container below must not run until the server is actually
+      # serving, or bucket creation races the startup and fails silently.
       test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 20
+    restart: unless-stopped
 
-  # Provisions buckets once MinIO is up, then exits.
-  #  - raw    : Object-Lock ON at creation (WORM) + versioning + a default
-  #             COMPLIANCE retention. Bhavcopies dropped here cannot be
-  #             overwritten or deleted until the window elapses = tamper-evidence.
-  #  - delta  : versioning ON (Delta keeps its own log; versioning is belt-and-braces)
+  # One-shot: create the buckets, then exit. Re-running compose is safe —
+  # every command below is idempotent.
   minio-init:
     image: minio/mc:latest
     container_name: fs-minio-init
@@ -37,23 +61,28 @@ services:
       minio:
         condition: service_healthy
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      # Days source drops stay immutable. Override in .env.
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_RAW_BUCKET: ${MINIO_RAW_BUCKET:-raw}
+      MINIO_LAKE_BUCKET: ${MINIO_LAKE_BUCKET:-lake}
+      RAW_RETENTION_MODE: ${RAW_RETENTION_MODE:-GOVERNANCE}
       RAW_RETENTION_DAYS: ${RAW_RETENTION_DAYS:-3650}
     entrypoint: >
       /bin/sh -c '
       set -e;
       mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD";
-      echo "-> raw (WORM, object-lock)";
-      mc mb --with-lock --ignore-existing local/raw;
-      mc version enable local/raw;
-      mc retention set --default COMPLIANCE "$${RAW_RETENTION_DAYS}d" local/raw;
-      echo "-> delta (versioned)";
-      mc mb --ignore-existing local/delta;
-      mc version enable local/delta;
-      echo "buckets ready:"; mc ls local;
+      echo "--- raw bucket (object-locked) ---";
+      mc mb --with-lock --ignore-existing "local/$$MINIO_RAW_BUCKET";
+      mc version enable "local/$$MINIO_RAW_BUCKET";
+      mc retention set --default "$$RAW_RETENTION_MODE" "$${RAW_RETENTION_DAYS}d" "local/$$MINIO_RAW_BUCKET";
+      echo "--- lake bucket (writable, DuckLake-managed) ---";
+      mc mb --ignore-existing "local/$$MINIO_LAKE_BUCKET";
+      mc version enable "local/$$MINIO_LAKE_BUCKET";
+      echo "--- result ---";
+      mc retention info "local/$$MINIO_RAW_BUCKET";
+      mc ls local;
       '
+    restart: "no"
 
 volumes:
   minio-data:

@@ -29,10 +29,15 @@ store are gitignored, so `data_sync.py` push is the sole preservation path.
 
 `docker/docker-compose.yml` provisions:
 
-- **`raw/`** — created **with object-lock (WORM)** + versioning + a COMPLIANCE
-  retention. Landed bhavcopies can't be overwritten or deleted within the window:
-  tamper-evidence for the audit trail.
-- **`delta/`** — versioned.
+- **`raw/`** — created **with object-lock (WORM)** + versioning. Landed
+  bhavcopies can't be overwritten or deleted within the retention window:
+  tamper-evidence for the audit trail. The mode is set in `docker/.env` —
+  GOVERNANCE ships as the default, COMPLIANCE is the production intent (nobody
+  can delete before expiry, not even root). See `storage.md`.
+- **`lake/`** — versioned, and deliberately **NOT** object-locked. Holds the
+  DuckLake tables written by `src/python/lake_sync.py`; DuckLake must be able to
+  rewrite and expire its own Parquet during compaction. This replaced the
+  planned `delta/` bucket, which was never written to.
 
 The cutover is mechanical: flip the read globs in `src/nodejs/src/db.js` from local
 paths to `s3://raw/…`. Services then read MinIO, not disk.
