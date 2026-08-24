@@ -30,8 +30,11 @@ fine without it — screener auth just stays disabled.
 git submodule update --init src/nextjs
 
 # 1. storage (optional, for the WORM audit layer)
-docker compose -f docker/docker-compose.yml up -d
-#    creates raw/ (object-locked, versioned, COMPLIANCE retention) + delta/
+cp docker/.env.example docker/.env    # set MINIO_ROOT_PASSWORD before first run
+docker compose -f docker/docker-compose.yml --env-file docker/.env up -d
+#    creates raw/  (object-locked, versioned; retention mode from docker/.env)
+#            lake/ (versioned, NOT locked — DuckLake manages it)
+python src/python/lake_sync.py        # publish the Parquet stores into lake/
 
 # 2. ELT — two independent cadences, NOT one sequence (see CLAUDE.md)
 source .venv/bin/activate
