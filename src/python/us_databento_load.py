@@ -48,6 +48,7 @@ import argparse
 import io
 import json
 import logging
+import tempfile
 import time
 import zipfile
 from pathlib import Path
@@ -67,27 +68,64 @@ GAP_DAYS = 20
 
 
 def read_zip(zpath: Path) -> pd.DataFrame:
-    """One Databento job zip -> a frame of every bar in it."""
+    """One Databento job zip -> a frame of every bar in it.
+
+    Handles both member encodings Databento ships. A plain-CSV job is read
+    straight out of the archive; a .csv.zst job cannot be, because DuckDB has no
+    reader for the ZIP container and the `zstandard` package is not a
+    dependency. Those members are staged to a temp dir and read in ONE DuckDB
+    pass over the glob -- DuckDB decompresses zstd natively, and 2,000 separate
+    reads would otherwise dominate the run.
+    """
     z = zipfile.ZipFile(zpath)
-    names = sorted(n for n in z.namelist() if n.endswith(".csv"))
+    names = sorted(n for n in z.namelist() if n.endswith((".csv", ".csv.zst")))
     if not names:
-        log.warning("%s holds no CSVs", zpath.name)
+        log.warning("%s holds no CSV members", zpath.name)
         return pd.DataFrame()
 
-    # metadata.json records the dataset and schema the job was cut from. Read it
-    # rather than parsing the filenames: the CSV names carry a dataset prefix,
-    # but the manifest is what Databento actually guarantees.
+    # metadata.json records what the job was actually cut from. Read it rather
+    # than parsing filenames: the names carry a dataset prefix, but the manifest
+    # is what Databento guarantees.
     dataset = schema = None
+    pretty_px = True
     if "metadata.json" in z.namelist():
-        q = (json.loads(z.read("metadata.json")).get("query") or {})
+        md = json.loads(z.read("metadata.json"))
+        q = md.get("query") or {}
         dataset, schema = q.get("dataset"), q.get("schema")
+        # pretty_px False means prices are FIXED-POINT integers at 1e-9. Read as
+        # published they are off by nine orders of magnitude -- AAPL arrives as
+        # 312520000000 for $312.52 -- and nothing about the value looks wrong
+        # enough to catch by eye.
+        pretty_px = bool((md.get("customizations") or {}).get("pretty_px", True))
     if schema and schema != "ohlcv-1d":
         raise SystemExit(f"{zpath.name}: schema is {schema}, this loader expects ohlcv-1d")
 
-    df = pd.concat([pd.read_csv(io.BytesIO(z.read(n))) for n in names], ignore_index=True)
+    zst = [n for n in names if n.endswith(".zst")]
+    if zst:
+        with tempfile.TemporaryDirectory(prefix="dbn_") as tmp:
+            for n in zst:
+                (Path(tmp) / Path(n).name).write_bytes(z.read(n))
+            con = duckdb.connect()
+            glob = (Path(tmp) / "*.csv.zst").as_posix()
+            df = con.execute(
+                f"SELECT * FROM read_csv('{glob}', union_by_name=true)").df()
+            con.close()
+        plain = [n for n in names if not n.endswith(".zst")]
+        if plain:
+            df = pd.concat([df] + [pd.read_csv(io.BytesIO(z.read(n))) for n in plain],
+                           ignore_index=True)
+    else:
+        df = pd.concat([pd.read_csv(io.BytesIO(z.read(n))) for n in names],
+                       ignore_index=True)
+
+    if not pretty_px:
+        for c in ("open", "high", "low", "close"):
+            df[c] = pd.to_numeric(df[c], errors="coerce") * 1e-9
+        log.info("%s: fixed-point prices scaled by 1e-9", zpath.name)
+
     df["dataset"] = dataset or zpath.stem
     df["job"] = zpath.stem
-    log.info("%s: %d bars over %d days (%s)", zpath.name, len(df), len(names), dataset)
+    log.info("%s: %d bars over %d sessions (%s)", zpath.name, len(df), len(names), dataset)
     return df
 
 
@@ -120,7 +158,16 @@ def main() -> None:
         raise SystemExit("nothing to load")
     df = pd.concat(frames, ignore_index=True)
 
-    df["date"] = pd.to_datetime(df["ts_event"].str[:10])
+    # ts_event arrives as a STRING from the pandas path and as a TIMESTAMP from
+    # the DuckDB/zst path, so neither .str[:10] nor .dt works for both. Daily
+    # bars are stamped at UTC midnight; normalise to UTC before taking the date
+    # or a positive-offset local timezone rolls every bar to the previous day.
+    ts = df["ts_event"]
+    if pd.api.types.is_datetime64_any_dtype(ts):
+        parsed = pd.to_datetime(ts, utc=True).dt.tz_convert(None)
+    else:
+        parsed = pd.to_datetime(ts.astype(str).str[:10])
+    df["date"] = parsed.dt.normalize()
     for c in ("open", "high", "low", "close", "volume"):
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
