@@ -10,7 +10,7 @@ NSE/BSE daily bundles          SEBI/NSE filing index CSVs · LiveMint sitemaps
         ▼                              ▼
 data/extracts/<YYYYMMDD>/          data/store/*.parquet
   (day-partitioned market data)      (consolidated, whole history)
-        │                              │   + MinIO raw/ (WORM) · delta/   [v2]
+        │                              │   + MinIO raw/ (WORM) · lake/ (DuckLake)
         └──────────────┬───────────────┘
                        ▼
 src/nodejs/  REST API on :3000 — Express 5 + DuckDB schema-on-read over the globs;
