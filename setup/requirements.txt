@@ -13,4 +13,9 @@ pytz>=2024.1        # duckdb needs it to hand TIMESTAMPTZ back to Python
 # US market feed (src/python/us_market_pull.py) — S&P 500 bars for Markets US.
 yfinance>=1.5.0     # unofficial Yahoo client; treat outages as expected, not exceptional
 lxml>=5.0           # pandas.read_html flavor for the Wikipedia constituent table
+databento>=0.84     # decode Databento DBN jobs (us_databento_load.py). Needed
+                    # for encoding='dbn' archives: it decompresses zstd, decodes
+                    # the binary records, resolves symbols even when the job was
+                    # cut with map_symbols=false, and scales fixed-point prices.
+                    # CSV-encoded jobs do not need it.
                     # (the default path wants html5lib, which we don't ship)
