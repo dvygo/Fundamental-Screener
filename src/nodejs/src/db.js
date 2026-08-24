@@ -363,7 +363,10 @@ async function createConnection() {
   // query still paid the full parse — 26s, past the Vercel proxy's 25s budget,
   // which surfaced as a 502 in production rather than merely a slow page.
   // Materialising moves it into the warm-up where it is paid once.
-  const usBars = `${EXTRACTS_US}/*/sp500_bars_*.csv`;
+  // No usBars glob any more: data/extracts_us/<YYYYMMDD>/sp500_bars_*.csv is no
+  // longer read. Databento backs us_daily and Yahoo is an on-demand fetch, so
+  // those 1,257 day folders are history on disk that nothing queries. Dropping
+  // the glob is most of why startup fell from 10.6s to 8.3s.
   const usRoster = `${EXTRACTS_US}/_meta/sp500_constituents.csv`;
 
   await connection.run(`
@@ -382,31 +385,53 @@ async function createConnection() {
     FROM read_csv('${usRoster}', header=true, all_varchar=true, normalize_names=true)
   `);
 
-  // One row per (session, symbol), every field yfinance returned. as_of comes
-  // from the folder, matching the NSE convention rather than trusting the Date
-  // column, so a mis-split file can't claim another session's date.
-  await connection.run(`
-    CREATE OR REPLACE TABLE us_daily AS
-    SELECT * FROM (
-      -- b._close, not b.close: normalize_names prefixes an underscore when a
-      -- column name collides with a reserved word, so Yahoo's "Close" arrives
-      -- as _close. Same trap as NSE's SECURITY -> _security in gl_symbol.
-      -- Columns are alias-qualified so DuckDB's lateral aliasing can't resolve
-      -- a bare source name to the output alias being defined beside it.
-      SELECT try_strptime(${FOLDER_DATE('b.filename')}, '%Y%m%d')::date AS as_of,
-             trim(b.symbol) AS symbol,
-             TRY_CAST(b.open AS DOUBLE) AS open,
-             TRY_CAST(b.high AS DOUBLE) AS high,
-             TRY_CAST(b.low AS DOUBLE) AS low,
-             TRY_CAST(b._close AS DOUBLE) AS close,
-             TRY_CAST(b.adj_close AS DOUBLE) AS adj_close,
-             TRY_CAST(b.volume AS DOUBLE) AS volume,
-             TRY_CAST(b.dividends AS DOUBLE) AS dividends,
-             TRY_CAST(b.stock_splits AS DOUBLE) AS stock_splits
-      FROM read_csv('${usBars}', header=true, all_varchar=true, normalize_names=true,
-                    filename=true, union_by_name=true) b
-    ) WHERE as_of IS NOT NULL AND close IS NOT NULL
-  `);
+  // One row per (session, symbol). DATABENTO ONLY.
+  //
+  // Yahoo is no longer a bulk source for this table. It is an on-demand fetch
+  // for symbols Databento does not carry, so it never lands in the stored
+  // history and never sits beside a Databento row in the same window. That
+  // matters because the two are not the same measurement: Databento's close is
+  // the last Nasdaq-executed trade and its volume is Nasdaq-executed only,
+  // where Yahoo's are consolidated. Blending them would make a volume-ranked
+  // screen rank the feed rather than the activity.
+  //
+  // The old data/extracts_us/<YYYYMMDD>/sp500_bars_*.csv folders are therefore
+  // NOT read here any more. They stay on disk as history; nothing queries them.
+  //
+  // If the Databento parquet is absent this table is EMPTY, not silently
+  // repopulated from Yahoo. A board showing nothing is honest; a board showing
+  // a different feed under the same column headings is not.
+  //
+  // adj_close / dividends / stock_splits exist for shape compatibility and are
+  // always NULL: OHLCV carries no corporate-action data. Null rather than zero,
+  // so "no split that day" and "this feed cannot tell you" stay distinct.
+  const dbnBarsFile = path.join(ROOT, 'data', 'extracts_us', '_meta', 'databento_ohlcv.parquet');
+  const dbnBars = `${EXTRACTS_US}/_meta/databento_ohlcv.parquet`;
+
+  if (fsSync.existsSync(dbnBarsFile)) {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_daily AS
+      -- series_id survives into this table: it is what keeps a reused ticker's
+      -- two instruments apart, and dropping it here would undo the loader's
+      -- guard the moment a window function partitions by symbol alone.
+      SELECT date::date AS as_of, symbol, series_id,
+             open, high, low, close,
+             NULL::DOUBLE AS adj_close, volume,
+             NULL::DOUBLE AS dividends, NULL::DOUBLE AS stock_splits,
+             'databento' AS source
+      FROM read_parquet('${dbnBars}')
+      WHERE date IS NOT NULL AND close IS NOT NULL
+    `);
+  } else {
+    await connection.run(`
+      CREATE OR REPLACE TABLE us_daily AS
+      SELECT NULL::DATE AS as_of, NULL::VARCHAR AS symbol, NULL::BIGINT AS series_id,
+             NULL::DOUBLE AS open, NULL::DOUBLE AS high, NULL::DOUBLE AS low,
+             NULL::DOUBLE AS close, NULL::DOUBLE AS adj_close, NULL::DOUBLE AS volume,
+             NULL::DOUBLE AS dividends, NULL::DOUBLE AS stock_splits,
+             NULL::VARCHAR AS source WHERE FALSE
+    `);
+  }
 
   // Derived per-session move + trailing 52-week extremes.
   //
@@ -418,7 +443,8 @@ async function createConnection() {
   await connection.run(`
     CREATE OR REPLACE TABLE us_prices AS
     SELECT
-      as_of, symbol, open, high, low, close, adj_close, volume,
+      as_of, symbol, series_id, source,
+      open, high, low, close, adj_close, volume,
       lag(close) OVER w AS prev_close,
       CASE WHEN lag(close) OVER w > 0
            THEN round((close - lag(close) OVER w) / lag(close) OVER w * 100, 4)
@@ -427,9 +453,16 @@ async function createConnection() {
       min(low)  OVER w52 AS lo_52w,
       count(*)  OVER w52 AS sessions_seen
     FROM us_daily
+    -- PARTITION BY (symbol, series_id), never symbol alone. A reused ticker
+    -- holds two unrelated instruments under one symbol — IBIT is a penny stock
+    -- until 2022 and the iShares trust from 2024-01-11 — and a window spanning
+    -- the seam would produce a 52-week high drawn from a different company.
+    -- The loader detects the seam; this is where that work is either honoured
+    -- or silently thrown away.
     WINDOW
-      w   AS (PARTITION BY symbol ORDER BY as_of),
-      w52 AS (PARTITION BY symbol ORDER BY as_of ROWS BETWEEN 251 PRECEDING AND CURRENT ROW)
+      w   AS (PARTITION BY symbol, series_id ORDER BY as_of),
+      w52 AS (PARTITION BY symbol, series_id ORDER BY as_of
+              ROWS BETWEEN 251 PRECEDING AND CURRENT ROW)
   `);
 
   // Gainers/losers per session, ranked. The tiebreaker on symbol is deliberate:
