@@ -78,9 +78,18 @@ net insider flow — need shares x price across thousands of filings at once, an
 that can be neither computed from the `submissions` index nor fetched per
 symbol, because the board is many symbols by definition.
 
-Both are **untagged**. A tag only earns its place where there is a pair to
-distinguish; tagging a tab with no mirror implies a sibling that does not exist.
-So `(Archive)` / `(Live)` currently appears on Stock Centric US alone.
+Both are still **tagged `(Archive)`**, despite having no Live mirror.
+
+The first call here was that a tag only earns its place where there is a pair
+to distinguish. That was overruled, and the better reasoning is: the tag is a
+statement about the DATA, not a disambiguator between siblings. A reader
+arriving at the sidebar cold learns that Markets US and Insider Centric US are
+bulk primary data without having to notice that no `(Live)` twin sits beside
+them. An untagged tab reads as *unclassified*, not as *no mirror exists*.
+
+    Stock Centric US (Archive)  |  Stock Centric US (Live)
+    Markets US (Archive)
+    Insider Centric US (Archive)
 
 The consequence for the Live lane: `us_insider_live` (finviz, 19,525 rows) gets
 no board of its own. It stays where it already is — the per-symbol insider panel
