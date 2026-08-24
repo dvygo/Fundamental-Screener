@@ -43,14 +43,76 @@ FINRA short volume is same-day, SEC submissions T+2, Databento daily. Only
 carries a freshness line built from its own `/coverage` endpoint, showing real
 dates rather than an impression — the stamp tells the truth the tag cannot.
 
-### Markets US is the exception — offline only
+### What decides whether a source CAN be on-demand — decided 2026-08-24
 
-Markets US has **no Live mirror and no tag**. Since 2026-08-24 it reads
-Databento exclusively (`us_daily`), and Yahoo has become an on-demand per-symbol
-fetch rather than a bulk source.
+Not who publishes it. **The shape it ships in.**
 
-A tag only earns its place where there is a pair to distinguish. Tagging a tab
-that has no mirror adds noise and implies a sibling that does not exist.
+| source | shape | on-demand possible? |
+|---|---|---|
+| `submissions.zip`, `companyfacts.zip` | whole market, one file | no — bulk or nothing |
+| FINRA daily / biweekly | whole market, one file per period | no |
+| Databento jobs | whole market, one job | no |
+| SEC quarterly ownership sets | whole market, one zip | no |
+| Form 4 / 3 / 5 XML | one filing | **yes** |
+| Yahoo bars | one symbol | **yes** |
+| finviz quote page | one symbol | **yes** |
+
+There is no such thing as "just AAPL's row" of a FINRA daily file, so
+whole-market sources stay bulk whatever we would prefer. Everything per-entity
+is fetched on demand and never stored as history.
+
+**No backfills.** The only things held offline are the bulk archives above. In
+particular, crawling Form 4 XML to reconstruct history is explicitly rejected:
+10.7M filings at SEC's 10 req/s ceiling is weeks of fetching, and the quarterly
+ownership sets already contain it.
+
+### Two tabs are Archive-only — exceptions to the two-lane rule
+
+**Markets US** (decided 2026-08-24). Reads Databento exclusively via `us_daily`;
+Yahoo is an on-demand per-symbol fetch, not a bulk source.
+
+**Insider Centric US** (decided 2026-08-24). Stays on the SEC quarterly
+ownership sets. This is what settles whether those sets survive the on-demand
+shift: they do, because the board *is* them. Value-ranked views — biggest buys,
+net insider flow — need shares x price across thousands of filings at once, and
+that can be neither computed from the `submissions` index nor fetched per
+symbol, because the board is many symbols by definition.
+
+Both are **untagged**. A tag only earns its place where there is a pair to
+distinguish; tagging a tab with no mirror implies a sibling that does not exist.
+So `(Archive)` / `(Live)` currently appears on Stock Centric US alone.
+
+The consequence for the Live lane: `us_insider_live` (finviz, 19,525 rows) gets
+no board of its own. It stays where it already is — the per-symbol insider panel
+on Stock Centric US (Live).
+
+### The quarterly archive is COMPLETE — the XML adds no fields, only freshness
+
+Checked against 2026q2. The sets ship eight tables, and they are the flattened
+form of the same XML:
+
+| table | cols | carries |
+|---|---|---|
+| `SUBMISSION` | 14 | issuer, symbol, **`aff10b5one`** |
+| `REPORTINGOWNER` | 13 | name, relationship, title, address |
+| `NONDERIV_TRANS` | 28 | code, shares, price, holdings after, ownership |
+| `DERIV_TRANS` | 42 | options — exercise price, expiration, underlying |
+| `FOOTNOTES` | 3 | footnote text the other tables reference by id |
+| `NONDERIV_HOLDING`, `DERIV_HOLDING`, `OWNER_SIGNATURE` | | |
+
+The 10b5-1 flag is in there. So the ONLY thing per-filing XML buys is latency:
+T+2 instead of ~7 weeks. No extra field, nothing the archive cannot answer.
+
+That makes on-demand XML a **freshness feature, not a completeness one** — worth
+having on the Live lane's per-symbol insider panel, where finviz sits today,
+and worth nothing at all on Insider Centric US, which is Archive-only.
+
+**Currently only 3 of the 8 tables are read** (`SUBMISSION`, `REPORTINGOWNER`,
+`NONDERIV_TRANS`, in `db.js`). `DERIV_TRANS` is unread, so option grants,
+exercises and expirations — a large part of how executives are actually paid and
+how they actually exit — are on disk and invisible. `FOOTNOTES` is unread too,
+which is why every `*_fn` column in the transaction tables currently points at
+nothing.
 
 ## Why this shape, and what it fixes
 
