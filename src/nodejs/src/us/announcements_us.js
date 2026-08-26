@@ -161,7 +161,14 @@ export function usAnnouncements(days, limit) {
       ) WHERE rn = 1
     ),
     ex AS (
-      SELECT accn, item FROM (
+      -- DISTINCT, and it is load-bearing. A filing is listed once PER CIK that
+      -- references it — co-registrants, a parent and its financing subsidiary —
+      -- so sec_filings holds 219 rows for 210 accessions on a typical day, one
+      -- accession carrying three. Their items strings are identical, so
+      -- aggregating without DISTINCT repeated every code two or three times:
+      -- item_count was inflated, the "+N more" badge lied, and the detail panel
+      -- rendered "1.01 Material definitive agreement" three times over.
+      SELECT DISTINCT accn, item FROM (
         SELECT accn, trim(unnest(str_split(items, ','))) AS item FROM f
       ) WHERE item <> '' AND item <> '9.01'
     ),
@@ -187,7 +194,16 @@ export function usAnnouncements(days, limit) {
              count(*) AS item_count
       FROM lab GROUP BY accn
     )
-    SELECT s.symbol,
+    SELECT * EXCLUDE (rn) FROM (
+    SELECT row_number() OVER (
+             -- Same co-registrant problem on the output side: without this the
+             -- feed shows one filing two or three times, once per registrant.
+             -- Shortest-then-alphabetical symbol is the tiebreak one_symbol and
+             -- gl_symbol already use, and it favours the parent's ordinary
+             -- ticker over a subsidiary's.
+             PARTITION BY f.accn ORDER BY length(s.symbol), s.symbol
+           ) AS rn,
+           s.symbol,
            s.name AS company,
            nullif(trim(s.sic_description), '') AS sector,
            nullif(trim(s.exchanges), '') AS exchanges,
@@ -214,7 +230,8 @@ export function usAnnouncements(days, limit) {
     JOIN f ON f.accn = a.accn
     JOIN one_symbol s ON s.cik = f.cik
     LEFT JOIN react r ON r.accn = a.accn
-    ORDER BY f.accepted DESC NULLS LAST, s.symbol
+    ) WHERE rn = 1
+    ORDER BY accepted DESC NULLS LAST, symbol
     LIMIT ${limit}
   `);
 }

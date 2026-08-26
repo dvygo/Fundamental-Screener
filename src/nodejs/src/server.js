@@ -36,6 +36,7 @@ import { corporateActions } from '#india/corporate.js';
 import { usHigh52wEvents, usLow52wEvents, usGainersRecurrence, usLosersRecurrence } from '#us/screens_us.js';
 import { usInsiderRecent, usInsiderNet, usInsiderForSymbol } from '#us/insider_us.js';
 import { usAnnouncements } from '#us/announcements_us.js';
+import { usNews, FEEDS as US_NEWS_FEEDS } from '#us/news_us.js';
 import { usStockFundamentals, usStockPrices, usStockCoverage, usStockInsider } from '#us/stock_us.js';
 import {
   secStockProfile, secStockAnnual, secStockFacts,
@@ -326,6 +327,21 @@ app.get('/api/us/finra/short-interest/movers', route((req, res) => {
 // Insider Centric US — SEC Forms 3/4/5 (src/python/sec_insider_pull.py).
 // open_market=0 widens to grants, tax withholding and option exercises; the
 // default excludes them because they are payroll events, not decisions.
+// News US — RSS headlines from the feeds the client has enabled.
+//
+// `feeds` is a comma-separated list of CATALOGUE IDS, never URLs. Accepting a
+// URL here would let any caller point this server at anything it can reach —
+// cloud metadata included. Unknown ids are dropped rather than erroring, so a
+// stale id in someone's localStorage degrades to fewer feeds, not a broken pane.
+app.get('/api/us/news', route((req) => {
+  const raw = req.query.feeds;
+  const asked = (Array.isArray(raw) ? raw.join(',') : raw || '')
+    .split(',').map((s) => s.trim()).filter(Boolean).slice(0, 20);
+  const ids = asked.filter((id) => US_NEWS_FEEDS.has(id));
+  if (ids.length === 0) return { items: [], errors: [], feeds: [] };
+  return usNews(ids);
+}));
+
 // Announcements US — recent 8-K filings for the side pane. Item 9.01 is
 // suppressed inside the query (see announcements_us.js): it is an exhibit
 // notice, not an event, and it outnumbers every real code.
