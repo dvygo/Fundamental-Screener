@@ -70,7 +70,12 @@ src/nodejs/certs/
 /rclone.conf
 /.data-sync.env
 # Local tar.gz build staging for data_sync.py push (rebuilt each run).
-/.snapshots/
+# NOT anchored to the repo root: data_sync.py stages at REPO/.snapshots, but a
+# restored archive is just as often dropped in data/.snapshots/, and that path
+# was NOT covered by the old '/.snapshots/' rule -- a 3 GB tarball sat there
+# untracked and one 'git add -A' from being committed. A bare pattern matches
+# at any depth, so both locations are covered.
+.snapshots/
 
 # Crawl4AI / Playwright caches
 .crawl4ai/
