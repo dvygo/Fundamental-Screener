@@ -231,11 +231,10 @@ app.get('/api/us/screens/losers/recurrence', route((req, res) => {
 app.get('/api/us/stock/:symbol/fundamentals', route((req) =>
   usStockFundamentals(req.params.symbol.toUpperCase())));
 
-app.get('/api/us/stock/:symbol/prices', route((req, res) => {
-  const days = intParam(req, res, 'days', 180);
-  if (days === null) return null;
-  return usStockPrices(req.params.symbol.toUpperCase(), days);
-}));
+// Full history, always — no `days`. A row cap here produced a truncated
+// series indistinguishable from a complete one; narrowing returns as "as of".
+app.get('/api/us/stock/:symbol/prices', route((req) =>
+  usStockPrices(req.params.symbol.toUpperCase())));
 
 // Per-source coverage, so the page can state ONE honest freshness stamp
 // instead of asserting one it never checked.
@@ -279,11 +278,8 @@ app.get('/api/us/sec/:symbol/filings', route((req, res) => {
   return secStockFilings(req.params.symbol, limit, form);
 }));
 
-app.get('/api/us/sec/:symbol/bars', route((req, res) => {
-  const days = intParam(req, res, 'days', 180);
-  if (days === null) return null;
-  return secStockBars(req.params.symbol, days);
-}));
+app.get('/api/us/sec/:symbol/bars', route((req) =>
+  secStockBars(req.params.symbol)));
 
 app.get('/api/us/sec/:symbol/coverage', route((req) =>
   secStockCoverage(req.params.symbol)));

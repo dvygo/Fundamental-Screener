@@ -194,27 +194,28 @@ export function secStockCoverage(symbol) {
  * reused the rows belong to different instruments, and the caller needs to see
  * that rather than read one continuous history that never existed.
  */
-export function secStockBars(symbol, days) {
-  // days = 0 means EVERY bar held for the symbol (AAPL: 2,089, back to
-  // 2018-05-01). Nothing here is paginated, so "all" is a real option rather
-  // than a number large enough to look like one.
-  //
-  // LIMIT over an ordered read, not `as_of > max(as_of) - INTERVAL n DAY`.
-  // The heading says "sessions" and this now actually delivers sessions: a
-  // calendar window is eaten by weekends and holidays, so days=90 returned
-  // ~62 rows while claiming 90. Same rows-not-range reasoning as the 252
-  // session windows in db.js.
-  //
-  // `dataset` is deliberately not selected. It is the constant 'XNAS.ITCH' on
-  // all 19,054,317 rows of the source, so it rendered a column of identical
-  // values; the panel heading already states the venue.
-  const limit = Number(days) > 0 ? `LIMIT ${Number(days)}` : '';
+/**
+ * Every daily bar held for the symbol, newest first (AAPL: 2,089, back to
+ * 2018-05-01). No row cap and no date window.
+ *
+ * There WAS a `days` parameter. It is gone rather than defaulted, because a
+ * caller could still pass one and quietly get a truncated series that looked
+ * complete. Narrowing is coming back as an explicit "as of" — which answers
+ * "what did this look like on date X" — and a last-N-rows limit is not that.
+ *
+ * The window it replaced was `as_of > max(as_of) - INTERVAL n DAY`: calendar
+ * days, while the UI called them sessions, so 90 returned about 62.
+ *
+ * `dataset` is deliberately not selected — it is the constant 'XNAS.ITCH' on
+ * all 19,054,317 rows of the source, so it rendered a column of identical
+ * values.
+ */
+export function secStockBars(symbol) {
   return queryJson(`
     SELECT as_of, series_symbol, open, high, low, close, adj_close, volume,
            pct_change, hi_252d, lo_252d
     FROM us_dbn_prices
     WHERE symbol = ?
     ORDER BY as_of DESC
-    ${limit}
   `, [normSymbol(symbol)]);
 }
