@@ -22,22 +22,45 @@ import { queryJson } from '#db.js';
 // of its bars. Without this guard every symbol's earliest session trivially
 // sets a "record" (the trailing window contains only itself), which would fill
 // the board with noise on the oldest dates and on recent IPOs / index joiners.
+// NO company_name / sector ON THIS BOARD, DELIBERATELY.
+//
+// us_roster is the Wikipedia S&P 500 list — ~500 names. Markets US is fed by
+// Databento, which carries 23,749 distinct symbols, so a LEFT JOIN onto the
+// roster filled those two columns for almost nothing. Measured 2026-08-26:
+//
+//   52-week high        135/2518   5.4%
+//   52-week low          36/1381   2.6%
+//   gainers recurrence    1/345    0.3%
+//   losers recurrence     1/327    0.3%
+//
+// A column that is blank 95-99% of the time is worse than an absent one: it
+// reads as "this company has no sector" rather than "we never had the data."
+// The symbol still deep-links to Stock Centric US, which resolves name and
+// profile per symbol from SEC — so the information is one click away, sourced
+// from something that actually covers the universe.
+//
+// Insider Centric US keeps both columns and is NOT affected: it INNER JOINs
+// us_roster, so the S&P 500 *is* its universe by design and the fill is 100%.
+//
+// Restoring these market-wide needs a real reference table (SEC name + SIC
+// covers 10,206 tickers); GICS/TRBC sector names are licensed and cannot be
+// sourced free.
+
 const FULL_YEAR = 'sessions_seen >= 252';
 
 /** New 52-week highs over the last N days, most frequent first. */
 export function usHigh52wEvents(n) {
   return queryJson(`
     WITH d AS (SELECT max(as_of) md FROM us_prices)
-    SELECT p.symbol, r.company_name, r.sector,
+    SELECT p.symbol,
            count(DISTINCT p.as_of) AS high_events,
            min(p.as_of) AS first_event, max(p.as_of) AS last_event,
            round(max(p.hi_52w)::DECIMAL(18,4), 2) AS high_52w
     FROM us_prices p
     CROSS JOIN d
-    LEFT JOIN us_roster r ON r.symbol = p.symbol
     WHERE p.as_of > d.md - INTERVAL ${n} DAY
       AND ${FULL_YEAR} AND p.high >= p.hi_52w
-    GROUP BY p.symbol, r.company_name, r.sector
+    GROUP BY p.symbol
     ORDER BY high_events DESC, p.symbol
   `);
 }
@@ -46,16 +69,15 @@ export function usHigh52wEvents(n) {
 export function usLow52wEvents(n) {
   return queryJson(`
     WITH d AS (SELECT max(as_of) md FROM us_prices)
-    SELECT p.symbol, r.company_name, r.sector,
+    SELECT p.symbol,
            count(DISTINCT p.as_of) AS low_events,
            min(p.as_of) AS first_event, max(p.as_of) AS last_event,
            round(min(p.lo_52w)::DECIMAL(18,4), 2) AS low_52w
     FROM us_prices p
     CROSS JOIN d
-    LEFT JOIN us_roster r ON r.symbol = p.symbol
     WHERE p.as_of > d.md - INTERVAL ${n} DAY
       AND ${FULL_YEAR} AND p.low <= p.lo_52w
-    GROUP BY p.symbol, r.company_name, r.sector
+    GROUP BY p.symbol
     ORDER BY low_events DESC, p.symbol
   `);
 }
@@ -71,14 +93,14 @@ export function usLow52wEvents(n) {
 export function usGainersRecurrence(n, top) {
   return queryJson(`
     WITH d AS (SELECT max(as_of) md FROM us_gainloss)
-    SELECT g.symbol, g.company_name, g.sector,
+    SELECT g.symbol,
            count(*) AS times_in_top,
            round(avg(g.pct_change::DECIMAL(12,4)), 2) AS avg_pct,
            min(g.as_of) AS first_seen, max(g.as_of) AS last_seen
     FROM us_gainloss g
     CROSS JOIN d
     WHERE g.as_of > d.md - INTERVAL ${n} DAY AND g.gain_rank <= ${top}
-    GROUP BY g.symbol, g.company_name, g.sector
+    GROUP BY g.symbol
     ORDER BY times_in_top DESC, avg_pct DESC, g.symbol
   `);
 }
@@ -87,14 +109,14 @@ export function usGainersRecurrence(n, top) {
 export function usLosersRecurrence(n, top) {
   return queryJson(`
     WITH d AS (SELECT max(as_of) md FROM us_gainloss)
-    SELECT g.symbol, g.company_name, g.sector,
+    SELECT g.symbol,
            count(*) AS times_in_bottom,
            round(avg(g.pct_change::DECIMAL(12,4)), 2) AS avg_pct,
            min(g.as_of) AS first_seen, max(g.as_of) AS last_seen
     FROM us_gainloss g
     CROSS JOIN d
     WHERE g.as_of > d.md - INTERVAL ${n} DAY AND g.lose_rank <= ${top}
-    GROUP BY g.symbol, g.company_name, g.sector
+    GROUP BY g.symbol
     ORDER BY times_in_bottom DESC, avg_pct ASC, g.symbol
   `);
 }

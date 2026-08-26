@@ -539,13 +539,12 @@ async function createConnection() {
   // can return different rows (this bit the NSE recurrence screens).
   await connection.run(`
     CREATE OR REPLACE TABLE us_gainloss AS
-    SELECT p.as_of, p.symbol, r.company_name, r.sector,
+    SELECT p.as_of, p.symbol,
            p.close, p.prev_close, p.pct_change, p.volume,
            CASE WHEN p.pct_change >= 0 THEN 'G' ELSE 'L' END AS direction,
            row_number() OVER (PARTITION BY p.as_of ORDER BY p.pct_change DESC, p.symbol) AS gain_rank,
            row_number() OVER (PARTITION BY p.as_of ORDER BY p.pct_change ASC,  p.symbol) AS lose_rank
     FROM us_prices p
-    LEFT JOIN us_roster r ON r.symbol = p.symbol
     WHERE p.pct_change IS NOT NULL
   `);
 

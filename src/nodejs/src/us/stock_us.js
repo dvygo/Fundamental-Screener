@@ -40,14 +40,33 @@ export function usStockFundamentals(symbol) {
   `, [symbol, symbol]);
 }
 
-/** Price history for the technical half — Yahoo bars, newest first. */
+/**
+ * Price history for the technical half, newest first.
+ *
+ * days = 0 returns everything held for the symbol; the page defaults to that.
+ *
+ * LIMIT over an ordered read, which fixes two things the old
+ * `as_of > (SELECT max(as_of) FROM us_prices) - INTERVAL n DAY` got wrong:
+ *
+ *  1. It counted CALENDAR days while the heading said "sessions", so 90 asked
+ *     for 90 and returned about 62 — weekends and holidays ate the rest.
+ *  2. Worse, that max(as_of) was the MARKET-WIDE latest session, not this
+ *     symbol's. Any symbol whose last bar predates the market's — delisted,
+ *     halted, or simply not carried lately — had the window anchored past the
+ *     end of its own history and came back short or completely empty, which
+ *     reads as "no data held" rather than "no recent data".
+ *
+ * Ordering by as_of DESC and taking the first n rows is anchored to the
+ * symbol's own history by construction, so neither failure is reachable.
+ */
 export function usStockPrices(symbol, days) {
+  const limit = Number(days) > 0 ? `LIMIT ${Number(days)}` : '';
   return queryJson(`
     SELECT as_of, open, high, low, close, volume, pct_change, hi_52w, lo_52w
     FROM us_prices
     WHERE symbol = ?
-      AND as_of > (SELECT max(as_of) FROM us_prices) - INTERVAL ${days} DAY
     ORDER BY as_of DESC
+    ${limit}
   `, [symbol]);
 }
 

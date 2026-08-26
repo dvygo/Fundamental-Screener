@@ -195,12 +195,26 @@ export function secStockCoverage(symbol) {
  * that rather than read one continuous history that never existed.
  */
 export function secStockBars(symbol, days) {
+  // days = 0 means EVERY bar held for the symbol (AAPL: 2,089, back to
+  // 2018-05-01). Nothing here is paginated, so "all" is a real option rather
+  // than a number large enough to look like one.
+  //
+  // LIMIT over an ordered read, not `as_of > max(as_of) - INTERVAL n DAY`.
+  // The heading says "sessions" and this now actually delivers sessions: a
+  // calendar window is eaten by weekends and holidays, so days=90 returned
+  // ~62 rows while claiming 90. Same rows-not-range reasoning as the 252
+  // session windows in db.js.
+  //
+  // `dataset` is deliberately not selected. It is the constant 'XNAS.ITCH' on
+  // all 19,054,317 rows of the source, so it rendered a column of identical
+  // values; the panel heading already states the venue.
+  const limit = Number(days) > 0 ? `LIMIT ${Number(days)}` : '';
   return queryJson(`
     SELECT as_of, series_symbol, open, high, low, close, adj_close, volume,
-           pct_change, hi_252d, lo_252d, dataset
+           pct_change, hi_252d, lo_252d
     FROM us_dbn_prices
     WHERE symbol = ?
-      AND as_of > (SELECT max(as_of) FROM us_dbn_prices WHERE symbol = ?) - INTERVAL ${days} DAY
     ORDER BY as_of DESC
-  `, [normSymbol(symbol), normSymbol(symbol)]);
+    ${limit}
+  `, [normSymbol(symbol)]);
 }
