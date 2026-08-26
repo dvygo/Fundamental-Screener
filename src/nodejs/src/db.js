@@ -793,6 +793,11 @@ async function createConnection() {
       SELECT cik,
              accessionNumber AS accn,
              TRY_CAST(filingDate AS DATE) AS filed,
+             -- When EDGAR ACCEPTED it, to the second. filingDate is only a
+             -- date, so it cannot order same-day filings — and an 8-K feed is
+             -- read newest-first, where "which of today's twelve came last"
+             -- is the whole question.
+             TRY_CAST(acceptanceDateTime AS TIMESTAMP) AS accepted,
              TRY_CAST(reportDate AS DATE) AS period,
              form,
              items,
@@ -805,6 +810,7 @@ async function createConnection() {
     await connection.run(`
       CREATE OR REPLACE VIEW us_sec_filings AS
       SELECT NULL::VARCHAR AS cik, NULL::VARCHAR AS accn, NULL::DATE AS filed,
+             NULL::TIMESTAMP AS accepted,
              NULL::DATE AS period, NULL::VARCHAR AS form, NULL::VARCHAR AS items,
              NULL::VARCHAR AS document, NULL::VARCHAR AS document_desc,
              NULL::BOOLEAN AS is_xbrl WHERE FALSE

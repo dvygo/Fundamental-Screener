@@ -35,6 +35,7 @@ import { searchCompanies, companyInsider, companyShareholding, companyDrilldown,
 import { corporateActions } from '#india/corporate.js';
 import { usHigh52wEvents, usLow52wEvents, usGainersRecurrence, usLosersRecurrence } from '#us/screens_us.js';
 import { usInsiderRecent, usInsiderNet, usInsiderForSymbol } from '#us/insider_us.js';
+import { usAnnouncements } from '#us/announcements_us.js';
 import { usStockFundamentals, usStockPrices, usStockCoverage, usStockInsider } from '#us/stock_us.js';
 import {
   secStockProfile, secStockAnnual, secStockFacts,
@@ -325,6 +326,19 @@ app.get('/api/us/finra/short-interest/movers', route((req, res) => {
 // Insider Centric US — SEC Forms 3/4/5 (src/python/sec_insider_pull.py).
 // open_market=0 widens to grants, tax withholding and option exercises; the
 // default excludes them because they are payroll events, not decisions.
+// Announcements US — recent 8-K filings for the side pane. Item 9.01 is
+// suppressed inside the query (see announcements_us.js): it is an exhibit
+// notice, not an event, and it outnumbers every real code.
+app.get('/api/us/announcements', route((req, res) => {
+  // days=1 = the last day that actually filed (see announcements_us.js — it
+  // anchors to the data, not the calendar). The side pane wants exactly that;
+  // a multi-day Corporate Announcements board can raise it later.
+  const days = intParam(req, res, 'days', 1);
+  const limit = intParam(req, res, 'limit', 200);
+  if (days === null || limit === null) return null;
+  return usAnnouncements(days, limit);
+}));
+
 app.get('/api/us/insider/recent', route((req, res) => {
   const days = intParam(req, res, 'days', 90);
   if (days === null) return null;
